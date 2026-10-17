@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import InputField from '../components/ui/InputField';
-import ContactField from '../components/ui/ContactField';
-import PrimaryButton from '../components/ui/PrimaryButton';
-import FadeInView from '../components/ui/FadeInView';
+import InputField from '../../components/ui/InputField';
+import ContactField from '../../components/ui/ContactField';
+import PrimaryButton from '../../components/ui/PrimaryButton';
+import FadeInView from '../../components/ui/FadeInView';
 
 const AddCustomerScreen = ({ onBack, onSubmit }) => {
   const [name, setName] = useState('');

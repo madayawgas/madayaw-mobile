@@ -2,15 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import CustomerCard from '../components/customers/CustomerCard';
-import BottomNav from '../components/ui/BottomNav';
+import CustomerCard from '../../components/sales/CustomerCard';
+import BottomNav from '../../components/navigation/BottomNav';
 import AddCustomerScreen from './AddCustomerScreen';
 import CustomerDetailsScreen from './CustomerDetailsScreen';
 import NewOrderScreen from './NewOrderScreen';
 import ConfirmOrderScreen from './ConfirmOrderScreen';
-import { fetchCustomers } from '../services/mockCustomerApi';
-import { fetchProducts } from '../services/mockProductApi';
-import { createOrder } from '../services/mockOrderApi';
+import { fetchCustomers } from '../../services/mockCustomerApi';
+import { fetchProducts } from '../../services/mockProductApi';
+import { createOrder } from '../../services/mockOrderApi';
 
 const CustomerScreen = ({ activeTab, onSelectTab }) => {
   const [customers, setCustomers] = useState([]);

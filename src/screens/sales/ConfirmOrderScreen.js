@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import QuantityControl from '../components/orders/QuantityControl';
-import OrderSummaryDrawer from '../components/orders/OrderSummaryDrawer';
-import FadeInView from '../components/ui/FadeInView';
+import QuantityControl from '../../components/sales/QuantityControl';
+import OrderSummaryDrawer from '../../components/sales/OrderSummaryDrawer';
+import FadeInView from '../../components/ui/FadeInView';
 
 const ConfirmOrderScreen = ({ selectedProducts: initialProducts = [], customer, onBack, onConfirm }) => {
   const [products, setProducts] = useState(initialProducts);
@@ -55,7 +55,7 @@ const ConfirmOrderScreen = ({ selectedProducts: initialProducts = [], customer, 
           </View>
 
           {/* Separator Line */}
-                      <View className="border-b border-[#D9D9D9] w-full mb-5" />
+          <View className="border-b border-[#D9D9D9] w-full mb-5" />
 
           {/* Subtitle */}
           <Text className="text-center text-gray-400 text-xs italic mb-3">
@@ -85,7 +85,7 @@ const ConfirmOrderScreen = ({ selectedProducts: initialProducts = [], customer, 
                   {/* Left Side: Image Placeholder */}
                   <View className="w-16 h-16 mr-4 items-center justify-center">
                     <Image
-                      source={require('../../assets/images/placeholder.png')}
+                      source={require('../../../assets/images/placeholder.png')}
                       className="w-full h-full"
                       resizeMode="contain"
                     />

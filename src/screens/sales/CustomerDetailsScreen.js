@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import PlaceholderSvg from '../../assets/svg/placeholder.svg';
-import PrimaryButton from '../components/ui/PrimaryButton';
-import FadeInView from '../components/ui/FadeInView';
+import PlaceholderSvg from '../../../assets/svg/placeholder.svg';
+import PrimaryButton from '../../components/ui/PrimaryButton';
+import FadeInView from '../../components/ui/FadeInView';
 
 const CustomerDetailsScreen = ({ customer, onBack, onAddOrder }) => {
   return (

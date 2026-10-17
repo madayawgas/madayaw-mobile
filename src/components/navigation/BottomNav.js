@@ -45,37 +45,26 @@ const NavTab = ({ iconName, activeIconName, label, isActive, onPress }) => {
   );
 };
 
-const BottomNav = ({ activeTab = 'dashboard', onSelectTab }) => {
+const DEFAULT_TABS = [
+  { id: 'dashboard', label: 'Home', iconName: 'server-outline', activeIconName: 'server' },
+  { id: 'order', label: 'Order', iconName: 'cart-outline', activeIconName: 'cart' },
+  { id: 'customer', label: 'Customer', iconName: 'person-outline', activeIconName: 'person' },
+  { id: 'profile', label: 'Profile', iconName: 'person-circle-outline', activeIconName: 'person-circle' },
+];
+
+const BottomNav = ({ activeTab = 'dashboard', onSelectTab, tabs = DEFAULT_TABS }) => {
   return (
     <View className="absolute bottom-20 self-center flex-row bg-white rounded-[2rem] shadow-lg border border-gray-200 px-4 py-2 items-center justify-between w-11/12 z-20">
-      <NavTab
-        label="Home"
-        iconName="server-outline"
-        activeIconName="server"
-        isActive={activeTab === 'dashboard'}
-        onPress={() => onSelectTab && onSelectTab('dashboard')}
-      />
-      <NavTab
-        label="Order"
-        iconName="cart-outline"
-        activeIconName="cart"
-        isActive={activeTab === 'order'}
-        onPress={() => onSelectTab && onSelectTab('order')}
-      />
-      <NavTab
-        label="Customer"
-        iconName="person-outline"
-        activeIconName="person"
-        isActive={activeTab === 'customer'}
-        onPress={() => onSelectTab && onSelectTab('customer')}
-      />
-      <NavTab
-        label="Profile"
-        iconName="person-circle-outline"
-        activeIconName="person-circle"
-        isActive={activeTab === 'profile'}
-        onPress={() => onSelectTab && onSelectTab('profile')}
-      />
+      {tabs.map((tab) => (
+        <NavTab
+          key={tab.id}
+          label={tab.label}
+          iconName={tab.iconName}
+          activeIconName={tab.activeIconName}
+          isActive={activeTab === tab.id}
+          onPress={() => onSelectTab && onSelectTab(tab.id)}
+        />
+      ))}
     </View>
   );
 };
