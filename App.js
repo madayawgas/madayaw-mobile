@@ -2,12 +2,12 @@ import './global.css';
 import React, { useState, useEffect } from 'react';
 import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import SplashScreen from './src/screens/SplashScreen';
-import LoginScreen from './src/screens/LoginScreen';
-import DashboardScreen from './src/screens/DashboardScreen';
-import CustomerScreen from './src/screens/CustomerScreen';
-import OrderScreen from './src/screens/OrderScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
+import SplashScreen from './src/screens/auth/SplashScreen';
+import LoginScreen from './src/screens/auth/LoginScreen';
+import DashboardScreen from './src/screens/sales/DashboardScreen';
+import CustomerScreen from './src/screens/sales/CustomerScreen';
+import OrderScreen from './src/screens/sales/OrderScreen';
+import ProfileScreen from './src/screens/shared/ProfileScreen';
 import FadeInView from './src/components/ui/FadeInView';
 
 export default function App() {

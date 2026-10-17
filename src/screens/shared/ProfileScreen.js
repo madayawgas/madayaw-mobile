@@ -7,9 +7,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import BottomNav from '../components/ui/BottomNav';
-import PrimaryButton from '../components/ui/PrimaryButton';
-import ProfileBg from '../../assets/svg/profile-bg.svg';
+import BottomNav from '../../components/navigation/BottomNav';
+import PrimaryButton from '../../components/ui/PrimaryButton';
+import ProfileBg from '../../../assets/svg/profile-bg.svg';
 
 const formatPhoneNumber = (phone) => {
   if (!phone) return 'N/A';
@@ -88,7 +88,7 @@ const ProfileScreen = ({
               }}
             >
               <Image
-                source={require('../../assets/images/placeholder.png')}
+                source={require('../../../assets/images/placeholder.png')}
                 style={{ height: '100%', width: '100%' }}
                 resizeMode="cover"
               />

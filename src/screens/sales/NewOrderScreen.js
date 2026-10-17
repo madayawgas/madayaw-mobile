@@ -8,10 +8,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import ProductOrderCard from '../components/orders/ProductOrderCard';
-import PrimaryButton from '../components/ui/PrimaryButton';
-import FadeInView from '../components/ui/FadeInView';
-import { fetchProducts } from '../services/mockProductApi';
+import ProductOrderCard from '../../components/sales/ProductOrderCard';
+import PrimaryButton from '../../components/ui/PrimaryButton';
+import FadeInView from '../../components/ui/FadeInView';
+import { fetchProducts } from '../../services/mockProductApi';
 
 const NewOrderScreen = ({ onBack, onContinue }) => {
   const [products, setProducts] = useState([]);

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
-import BottomNav from '../components/ui/BottomNav';
-import DashboardDesign from '../../assets/svg/dashboard-bg.svg';
+import BottomNav from '../../components/navigation/BottomNav';
+import DashboardDesign from '../../../assets/svg/dashboard-bg.svg';
 
 const DashboardScreen = ({ user, activeTab, onSelectTab }) => {
   return (

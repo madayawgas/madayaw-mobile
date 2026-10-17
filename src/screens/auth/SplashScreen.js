@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated } from 'react-native';
-import Logo from '../../assets/svg/logo.svg';
+import Logo from '../../../assets/svg/logo.svg';
 
 const SplashScreen = () => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
