@@ -10,9 +10,12 @@ export const productApi = {
       return MOCK_PRODUCTS;
     }
 
-    const res = await apiClient<{ products: ProductCatalogItem[] }>('/inventory/products', {
+    const res = await apiClient<any>('/inventory/products', {
       method: 'GET',
     });
-    return res.data.products;
+    const rawList = Array.isArray(res.data)
+      ? res.data
+      : (Array.isArray(res.data?.products) ? res.data.products : []);
+    return rawList;
   },
 };

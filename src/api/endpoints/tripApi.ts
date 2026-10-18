@@ -10,10 +10,11 @@ export const tripApi = {
       return MOCK_ACTIVE_TRIP;
     }
 
-    const res = await apiClient<ActiveAssignmentResponseData>('/trips/active-assignment', {
+    const res = await apiClient<any>('/trips/active-assignment', {
       method: 'GET',
     });
-    return res.data;
+    const trip = res.data?.trip || res.data;
+    return { trip };
   },
 
   async fetchTripStock(tripId: string): Promise<TripStockItem[]> {
@@ -22,9 +23,18 @@ export const tripApi = {
       return MOCK_INITIAL_TRIP_STOCK;
     }
 
-    const res = await apiClient<{ stock: TripStockItem[] }>(`/inventory/trips/${tripId}/stock`, {
+    const res = await apiClient<any>(`/inventory/trips/${tripId}/stock`, {
       method: 'GET',
     });
-    return res.data.stock;
+    const rawItems = res.data?.items || res.data?.stock || [];
+    if (!Array.isArray(rawItems)) return [];
+
+    return rawItems.map((item: any) => ({
+      productId: item.productId || item.product_id,
+      productName: item.productName || item.product_name || 'Gas Cylinder',
+      sku: item.sku || (item.containerType === 'CANISTER' ? 'BUTANE_170G' : 'LPG_11KG'),
+      condition: item.condition || 'FILLED',
+      quantityUnits: Number(item.currentOnBoardFull ?? item.loadedFull ?? item.quantityUnits ?? item.quantity ?? 0),
+    }));
   },
 };

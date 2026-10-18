@@ -11,6 +11,7 @@ import ConfirmOrderScreen from './ConfirmOrderScreen';
 import { fetchCustomers } from '../../services/mockCustomerApi';
 import { fetchProducts } from '../../services/mockProductApi';
 import { createOrder } from '../../services/mockOrderApi';
+import { salesService } from '../../services/salesService';
 
 const CustomerScreen = ({ activeTab, onSelectTab }) => {
   const [customers, setCustomers] = useState([]);
@@ -90,8 +91,38 @@ const CustomerScreen = ({ activeTab, onSelectTab }) => {
     }
   };
 
+  const handleAddCustomer = async (customerData) => {
+    try {
+      const newCust = await salesService.registerOfflineCustomer({
+        businessName: customerData.name,
+        contactPerson: customerData.name,
+        contactNumber: customerData.contactNumber,
+        deliveryAddress: customerData.address,
+        customerType: 'RETAIL',
+      });
+      setCustomers((prev) => [
+        {
+          id: newCust.id,
+          name: newCust.business_name,
+          address: newCust.delivery_address,
+          contactNumber: newCust.contact_number,
+          customerType: newCust.customer_type,
+          canister_debt: 0,
+          isActive: true,
+          createdAt: newCust.created_at,
+        },
+        ...prev,
+      ]);
+      setSubStep('list');
+      Alert.alert('Customer Added', `Customer "${customerData.name}" has been registered.`);
+    } catch (e) {
+      console.warn('Failed to add customer:', e);
+      Alert.alert('Error', 'Could not register customer offline.');
+    }
+  };
+
   if (subStep === 'add') {
-    return <AddCustomerScreen onBack={() => setSubStep('list')} />;
+    return <AddCustomerScreen onBack={() => setSubStep('list')} onSubmit={handleAddCustomer} />;
   }
 
   if (subStep === 'details') {

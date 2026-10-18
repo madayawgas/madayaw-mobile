@@ -11,6 +11,8 @@ import {
   CanisterLedgerEntry,
   PaymentMethod,
 } from '@/types';
+import { networkSentinel } from '@/sync/networkSentinel';
+import { syncWorker } from '@/sync/syncWorker';
 
 export interface SaleItemInput {
   productId: string;
@@ -161,8 +163,16 @@ export const salesService = {
       sync_status: 'PENDING',
     };
 
-    // 5. Build Sync Payload
+    // 5. Build Sync Payload (flattened with transaction header at root for backend sync.service.js)
     const syncPayload = {
+      id: orderId,
+      transactionNo,
+      tripId: activeTrip.trip_id,
+      customerId,
+      recordedBy: activeTrip.sales_user_id,
+      status: 'COMPLETED',
+      transactedAt,
+      // Retain nested transaction object for backward/forward contract compatibility
       transaction: {
         id: orderId,
         transactionNo,
@@ -220,6 +230,13 @@ export const salesService = {
         payload: JSON.stringify(syncPayload),
       },
     });
+
+    // 7. If online, initiate background sync immediately
+    if (networkSentinel.isOnline()) {
+      syncWorker.runSyncCycle().catch((err) => {
+        console.warn('[SalesService] Immediate background sync cycle skipped:', err?.message || err);
+      });
+    }
 
     return { order: salesOrder, receiptNumber };
   },

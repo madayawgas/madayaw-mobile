@@ -1,7 +1,12 @@
+import { ENV } from '../config';
+import { customerRepository } from '../database';
+import { customerApi } from '../api';
+import { networkSentinel } from '../sync/networkSentinel';
+
 const mockCustomersData = {
   "status": "success",
   "data": {
-    "count": 6,
+    "count": 5,
     "customers": [
       {
         "id": "1",
@@ -53,9 +58,51 @@ const mockCustomersData = {
 };
 
 export const fetchCustomers = async () => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(mockCustomersData);
-    }, 200);
-  });
+  if (ENV.USE_MOCK) {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve(mockCustomersData);
+      }, 200);
+    });
+  }
+
+  // 1. In production, check remote if online
+  if (networkSentinel.isOnline()) {
+    try {
+      const remoteData = await customerApi.fetchCustomers();
+      const rawList = Array.isArray(remoteData)
+        ? remoteData
+        : (remoteData?.customers || remoteData?.items || []);
+      if (Array.isArray(rawList) && rawList.length > 0) {
+        await customerRepository.upsertCustomers(rawList);
+      }
+    } catch (e) {
+      console.warn('[mockCustomerApi] Remote customer fetch failed, using local database:', e.message);
+    }
+  }
+
+  // 2. Read from authoritative local SQLite database
+  const localCustomers = await customerRepository.getAllCustomers();
+  const normalized = (localCustomers || []).map((c) => ({
+    id: c.id,
+    name: c.name || c.business_name || c.store_name || 'Customer',
+    business_name: c.business_name || c.name || '',
+    address: c.address || c.delivery_address || '',
+    delivery_address: c.delivery_address || c.address || '',
+    contactNumber: c.contactNumber || c.contact_number || c.phone || '',
+    contact_number: c.contact_number || c.phone || '',
+    customerType: c.customerType || c.customer_type || 'RETAIL',
+    customer_type: c.customer_type || 'RETAIL',
+    canister_debt: c.canister_debt ?? c.current_debt ?? 0,
+    isActive: true,
+    createdAt: c.created_at || new Date().toISOString(),
+  }));
+
+  return {
+    status: 'success',
+    data: {
+      count: normalized.length,
+      customers: normalized,
+    },
+  };
 };

@@ -1,15 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   Image,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import BottomNav from '../../components/navigation/BottomNav';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import ProfileBg from '../../../assets/svg/profile-bg.svg';
+import { resetFullDatabase } from '../../database';
 
 const formatPhoneNumber = (phone) => {
   if (!phone) return 'N/A';
@@ -32,6 +34,32 @@ const ProfileScreen = ({
   const birthdate = user?.birthdate || 'DD/MM/YYYY';
   const username = user?.username || 'N/A';
   const phone = formatPhoneNumber(user?.phone);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const handleResetDatabase = () => {
+    Alert.alert(
+      'Reset Local Database',
+      'Are you sure you want to completely reset the local SQLite database? All queued offline mutations and cached data will be cleared and the schema reinitialized to a pristine state.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset Database',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsResetting(true);
+              await resetFullDatabase();
+              Alert.alert('Database Reset', 'Local database has been reinitialized to a clean state. You can now refresh data or restart the app.');
+            } catch (err) {
+              Alert.alert('Reset Failed', err && err.message ? err.message : 'Failed to reset local database.');
+            } finally {
+              setIsResetting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <View className="flex-1 bg-white">
@@ -147,8 +175,25 @@ const ProfileScreen = ({
             </View>
           </View>
 
+          {/* DATABASE & DIAGNOSTICS */}
+          <View className="mb-6 rounded-[34px] border border-[#DFE8EF] bg-white px-5 pb-5 pt-5">
+            <Text className="mb-2 text-[14px] font-bold text-[#7893A8]">
+              Data & Diagnostics
+            </Text>
+            <Text className="mb-4 text-xs text-[#8299AB]">
+              Clear local cached trips, orders, and stuck sync queues to reinitialize a clean local database.
+            </Text>
+            <PrimaryButton
+              title={isResetting ? "RESETTING DATABASE..." : "RESET LOCAL DATABASE"}
+              variant="outline"
+              borderColor="border-amber-400"
+              onPress={handleResetDatabase}
+              loading={isResetting}
+            />
+          </View>
+
           {/* ACTION BUTTONS */}
-          <View className="px-1 -mt-5">
+          <View className="px-1 -mt-2">
             <PrimaryButton
               title="EDIT PROFILE"
               variant="outline"

@@ -9,6 +9,13 @@ module.exports = defineConfig([
       "react-hooks/refs": "off",
       "react-hooks/set-state-in-effect": "off",
     },
-    ignores: ["dist/*"],
+    ignores: [
+      "dist/*",
+      "node_modules/**",
+      ".expo/**",
+      "graphify-out/**",
+      ".agents/**",
+    ],
   }
 ]);
+

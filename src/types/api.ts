@@ -3,7 +3,7 @@
  * Aligned with docs/api-contracts/ specifications.
  */
 
-import { Customer, ProductCatalogItem, UserSession } from './domain';
+import { Customer, ProductCatalogItem, SyncOperationType } from './domain';
 
 export interface ApiResponse<T> {
   status: 'success' | 'fail' | 'error';
@@ -92,9 +92,10 @@ export interface ProductCatalogResponseData {
 
 export interface SyncBatchItemPayload {
   queueId: string;
-  operationType: 'CREATE_ORDER' | 'CREATE_CUSTOMER' | 'ZERO_SALE_DECLARATION';
+  operationType: SyncOperationType;
   payload: any;
 }
+
 
 export interface SyncBatchRequest {
   tripId: string;
@@ -110,7 +111,11 @@ export interface SyncBatchResultItem {
 }
 
 export interface SyncBatchResponseData {
+  tripId?: string;
   processedCount: number;
-  results: SyncBatchResultItem[];
-  syncedAt: string;
+  ignoredCount?: number;
+  totalTransactions?: number;
+  transactionIds?: string[];
+  results?: SyncBatchResultItem[];
+  syncedAt?: string;
 }

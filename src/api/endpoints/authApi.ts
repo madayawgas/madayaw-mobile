@@ -1,6 +1,6 @@
 import { apiClient, delay } from '../client';
 import { ENV } from '@/config';
-import { LoginRequest, LoginResponseData, ApiResponse } from '@/types';
+import { LoginRequest, LoginResponseData } from '@/types';
 import { MOCK_SEED_USERS } from '../mockData';
 
 export const authApi = {

@@ -40,12 +40,13 @@ async function notifyListeners(): Promise<void> {
 export const syncScheduler = {
   /**
    * Starts the Tri-Trigger Sync Engine:
-   * 1. Network Sentinel transition listener
+   * 1. Network Sentinel transition listener (triggers sync immediately on offline -> online recovery)
    * 2. 30-60s interval heartbeat
    */
   start(): () => void {
-    // 1. Initialize Network Sentinel
+    // 1. Initialize Network Sentinel transition callback
     const unsubSentinel = networkSentinel.init(() => {
+      console.log('[SyncScheduler] Trigger 1: Backend connection recovered. Executing automatic syncNow.');
       syncScheduler.syncNow();
     });
 
@@ -56,10 +57,16 @@ export const syncScheduler = {
     // 2. Start Polling Heartbeat Interval
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(async () => {
-      if (networkSentinel.isOnline() && !syncWorker.isBusy()) {
-        const pending = await syncQueueRepository.getPendingCount();
-        if (pending > 0) {
-          console.log(`[SyncScheduler] Polling heartbeat detected ${pending} pending mutations.`);
+      if (syncWorker.isBusy()) return;
+
+      const pending = await syncQueueRepository.getPendingCount();
+      if (pending > 0) {
+        let isOnline = networkSentinel.isOnline();
+        if (!isOnline) {
+          isOnline = await networkSentinel.checkOnline();
+        }
+        if (isOnline) {
+          console.log(`[SyncScheduler] Trigger 2: Polling heartbeat detected ${pending} pending mutations.`);
           await syncScheduler.syncNow();
         }
       }
@@ -81,6 +88,19 @@ export const syncScheduler = {
    */
   async syncNow(): Promise<SyncResult> {
     notifyListeners();
+
+    // Verify actual backend reachability before executing
+    let isOnline = networkSentinel.isOnline();
+    if (!isOnline) {
+      isOnline = await networkSentinel.checkOnline();
+    }
+
+    if (!isOnline) {
+      console.log('[SyncScheduler] syncNow halted: backend is offline.');
+      notifyListeners();
+      return { attempted: 0, synced: 0, failed: 0, offline: true };
+    }
+
     const result = await syncWorker.runSyncCycle();
     if (result.synced > 0) {
       lastSyncedAt = new Date().toISOString();

@@ -30,9 +30,9 @@ export const syncQueueRepository = {
     const now = new Date().toISOString();
     const placeholders = queueIds.map(() => '?').join(',');
 
-    await db.withExclusiveTransactionAsync(async () => {
+    await db.withExclusiveTransactionAsync(async (txn) => {
       // 1. Mark items in sync_queue as SYNCED
-      await db.runAsync(
+      await txn.runAsync(
         `UPDATE sync_queue
          SET status = 'SYNCED', last_attempted_at = ?
          WHERE id IN (${placeholders});`,
@@ -40,7 +40,7 @@ export const syncQueueRepository = {
       );
 
       // 2. Also mark corresponding sales orders as SYNCED
-      await db.runAsync(
+      await txn.runAsync(
         `UPDATE local_sales_orders
          SET sync_status = 'SYNCED', synced_at = ?
          WHERE id IN (${placeholders});`,

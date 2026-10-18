@@ -35,18 +35,30 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
 ### Local SQLite Database (`madayawgas.db`)
 - Created and accessed asynchronously via `expo-sqlite` with **WAL mode** and foreign keys enabled (`src/database/connection.ts`).
 - **Core Schema Tables (`src/database/schema.ts`)**:
-  - `local_active_trip`: Active shift metadata (`trip_id`, `vehicle_plate`, `driver_name`, `sales_user_id`, `zone_id`, `status`).
+  - `local_active_trip`: Active shift metadata (`trip_id`, `trip_number`, `vehicle_plate`, `driver_name`, `sales_user_id`, `zone_id`, `status`, `dispatched_at`, `truck_id`, `truck_model`, `driver_id`, `sales_user_name`, `zone_name`).
   - `local_vehicle_inventory`: Truck loaded stock counters (`quantity_loaded`, `quantity_sold`, `quantity_remaining`).
-  - `local_customers`: Zone customer directory (`id`, `name`, `store_name`, `address`, `phone`, `current_debt`, `zone_id`).
-  - `local_sales_orders`: In-field sales records (`id`, `order_number`, `customer_id`, `trip_id`, `total_amount`, `payment_method`, `empties_returned_count`).
-  - `local_sales_items`: Line items for sales (`id`, `order_id`, `product_id`, `sku`, `quantity`, `unit_price`, `total_price`).
+  - `local_customers`: Zone customer directory (`id`, `name`, `store_name`, `address`, `phone`, `current_debt`, `zone_id`, `business_name`, `contact_person`, `contact_number`, `delivery_address`, `customer_type`, `canister_debt`, `is_locally_created`, `created_at`).
+  - `local_sales_orders`: In-field sales records (`id`, `transaction_no`, `customer_id`, `customer_name`, `receipt_number`, `trip_id`, `total_amount`, `payment_method`, `payment_reference`, `transacted_at`, `synced_at`, `sync_status`).
+  - `local_sales_items`: Line items for sales (`id`, `sales_order_id`, `product_id`, `product_name`, `quantity_sold`, `empties_returned`, `empties_defective`, `unit_price`, `subtotal`).
   - `local_canister_ledger`: Append-only tracking of cylinder swaps and loaned canisters.
-  - `sync_queue`: Mutation queue for store-and-forward syncing (`id`, `endpoint`, `method`, `payload`, `status`, `retry_count`, `idempotency_key`).
+  - `sync_queue`: Mutation queue for store-and-forward syncing (`id`, `endpoint`, `operation_type`, `payload`, `status`, `retry_count`, `last_error`, `created_at`).
   - `local_receipt_sequences`: Sequential counters for document numbers (`INV-...` for sales, `CD-...` for canister returns).
+  - `local_driver_shift`: Active duty shift attendance (`id`, `driver_id`, `status`, `clock_in_time`, `clock_out_time`, `synced`).
+  - `local_vehicle_telemetry`: Distance-based 5,000-km PM and odometer telemetry (`truck_id`, `plate_number`, `model`, `current_odometer`, `last_pm_odometer`, `status`, `last_serviced_at`).
+  - `local_fuel_logs`: Fuel refills (`id`, `truck_id`, `driver_id`, `liters`, `total_cost`, `odometer`, `receipt_photo_uri`, `logged_at`, `synced`).
+  - `local_apprehensions`: Roadside citations (`id`, `truck_id`, `driver_id`, `agency`, `citation_number`, `violation_notes`, `fine_amount`, `ticket_photo_uri`, `reported_at`, `synced`).
+  - `local_incidents`: Breakdown/defect findings (`id`, `truck_id`, `driver_id`, `incident_type`, `description`, `severity`, `photo_uri`, `reported_at`, `synced`).
+- **Database Reset & Re-initialization (`resetFullDatabase()`)**:
+  - Disables foreign keys (`PRAGMA foreign_keys = OFF;`), drops all 13 local SQLite tables in reverse dependency order, re-enables foreign keys, and re-executes `SCHEMA_SQL` to return the client to a clean slate without foreign key constraint violations.
+  - Exposed via Profile screens (`DriverProfileScreen.jsx` and `ProfileScreen.js`) with confirmation alert to allow developers and field operators to clear stuck sync queues or stale mock trips.
 
 ### Business Logic Invariants
 - **Permissive Selling Policy**: If the sales agent sells more stock than local inventory records show as remaining on board, warn the user but **ALLOW** the sale to proceed. Cash flow in the field takes precedence; discrepancies reconcile at the evening plant dock.
-- **Atomic Local Writes**: Every completed transaction decrements local vehicle inventory, updates canister debt math, logs order items, and inserts a pending mutation into `sync_queue` within a single SQLite transaction.
+- **Monotonic Odometer Integrity**: Client-side enforcement ensuring all new odometer readings must be greater than or equal to current registered odometer (`new_odometer >= current_odometer`).
+- **Mandatory Citation Photo Proof**: Block submission of roadside apprehension reports until ticket photo proof is attached and validated.
+- **Emergency SOS Direct Priority & Debounce**: High-affordance cabin SOS button with current GPS coordinates and an immediate 60-second cooldown timer. Life-critical SOS signals always attempt rapid direct HTTP dispatch (`/operations/alerts`) first, falling back to `sync_queue` only if offline.
+- **Web-Aligned Media Compression & Caching**: 5 MB ceiling enforcement, max 1920px dimension scaling, progressive JPEG compression (0.82 -> 0.35), and persistent offline caching in `${FileSystem.documentDirectory}offline_media/`.
+- **Atomic Local Writes & Transaction Safety**: Every completed transaction decrements local vehicle inventory, updates canister debt math, logs order items, and inserts a pending mutation into `sync_queue` within a single SQLite transaction using the explicit `txn` connection.
 - **Append-Only Canister Debt Math**:
   ```
   quantity_loaned = max(0, quantity_sold - empties_returned)
@@ -56,12 +68,34 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
   ```
 
 ### Store-and-Forward Sync Engine (`src/sync/`)
-- **Network Sentinel**: NetInfo listener monitoring online/offline transitions.
+- **Network Sentinel (`networkSentinel.ts`)**:
+  - Probes `BACKEND_HEALTH_URL` (derived dynamically from `ENV.API_URL.replace(/\/api\/?$/, '') + '/health'`) rather than public third-party WAN servers (e.g. Google `generate_204`). This ensures accurate reachability detection on private LAN development setups and offline intranet deployments.
+  - **Adaptive Heartbeat Polling**: Probes `/health` every 15s while online, and every 5s while offline for rapid backend recovery detection. Probes immediately when the app returns to the foreground via `AppState`.
+  - **Fail-Fast Trigger (`reportNetworkFailure()`)**: Invoked by `apiClient` and `mediaService` whenever a request encounters a network error (status 0 or 408 timeout), immediately dropping state to offline and starting rapid 5s recovery polling.
+- **Dual Direct-or-Queue Path**:
+  - When device is online: Operations attempt direct upload with short timeouts. If successful, local records are marked `synced = 1`. If upload times out or fails, mutations automatically enqueue to `sync_queue` without halting the user.
+  - When device is offline: Operations instantly persist to local SQLite and enqueue to `sync_queue` in single-digit milliseconds without triggering network timeouts.
+- **Cache-First Media Architecture (`mediaService.ts`)**:
+  - Images are compressed and stored in persistent offline storage (`offline_media/`) first.
+  - When offline, form submissions (fuel receipts, apprehension citations, incident photos) completely bypass remote uploads, queueing with the local cached `file://` URI in < 50ms.
+  - When online, `mediaService.uploadMedia` races `FileSystem.uploadAsync` against a 6-second timeout to prevent 60-second native socket hangs.
 - **Tri-Trigger Coordinator (`syncScheduler.ts`)**:
-  1. Network connectivity restored (offline -> online transition).
+  1. Network connectivity restored (offline -> online transition automatically detected by 5s probe).
   2. 30-second heartbeat interval while online.
-  3. Manual user trigger (`syncNow()`).
-- **Sync Worker (`syncWorker.ts`)**: Batches pending mutations chronologically to `POST /api/sales/sync-batch` with exponential backoff on retryable network errors.
+  3. Immediate sales trigger / Manual user trigger (`syncNow()`).
+  - **Guarded Manual Syncing**: `syncNow()` verifies backend reachability and blocks execution when offline (`offline: true`). Screen UI validates `SyncResult` counts (`synced`, `failed`) to prevent false-positive success notifications.
+- **Sync Worker (`syncWorker.ts`)**:
+  - Operational mutations (`CLOCK_IN`, `CLOCK_OUT`, `LOG_FUEL`, `REPORT_APPREHENSION`, `REPORT_ISSUE`, `EMERGENCY_SOS`) replay directly to their designated REST endpoints (`item.endpoint`) with individual error logging and retry incrementing.
+  - Automatically checks for offline cached file URIs (`file:///`) in operational payloads, uploads the image to `/api/media/upload`, updates the payload with the storage key and remote URL, and marks the corresponding local SQLite row (`local_fuel_logs`, `local_apprehensions`, `local_incidents`, `local_driver_shift`) as `synced = 1`. If media upload fails, the mutation is kept queued for the next cycle without sending invalid local URIs to the endpoint.
+  - Sales order mutations (`CREATE_ORDER`) batch chronologically to `POST /api/sales/sync-batch`, mapping backend `{ tripId, processedCount, transactionIds }`, updating `sync_queue` and setting `local_sales_orders.sync_status = 'SYNCED'`.
+- **Session & Invalidation Invariants (`apiClient.ts`)**:
+  - `apiClient` preserves authenticated sessions on `403 Forbidden` (permission denied on specific resources). Sessions are only cleared on genuine `401 Unauthorized` responses where an active token was provided.
+  - Timeout defaults to 6s with clean `408 Timeout/Offline` classification and automated failover notification to `networkSentinel`.
+- **Dynamic Truck & Driver Context Hydration (`driverService.ts`)**:
+  - Resolves active trip assignments via `GET /api/trips/active-assignment` and vehicle telemetry via `GET /api/fleet/my-vehicle`, caching to `local_active_trip` and `local_vehicle_telemetry`.
+  - Zero hardcoded vehicle/user UUIDs in business services; dynamic fallback based on loaded trip and cache.
+  - Mock data strictly gated by `ENV.USE_MOCK`: zero mock leakage in live/production mode.
+
 
 ---
 
@@ -72,6 +106,7 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
 - **Default Authentication Credentials**:
   - `sales_user` / `SalesPass123!` (Canonical backend sales agent)
   - `sperson` / `salesperson123` (Legacy test account)
+  - `driver_user` / `DriverPass123!` (Canonical frontline driver assigned to `ABC-1001`)
 - Bridged in `src/services/mockApi.js` connecting `LoginScreen.js` to `src/api/endpoints/authApi.ts` and `src/services/authService.ts`.
 
 ---
@@ -105,18 +140,24 @@ Run lint and typecheck before declaring any task done.
 
 ## Navigation, Screens & Codebase Structure
 
-- **Screen Organization (`src/screens/`)**:
+- **Screen Organization (`src/screens/` and `src/features/`)**:
   - `auth/`: Pre-login screens (`LoginScreen.js`, `SplashScreen.js`).
   - `shared/`: Screens shared across roles (`ProfileScreen.js`).
   - `sales/`: Sales flow screens (`DashboardScreen.js`, `CustomerScreen.js`, `CustomerDetailsScreen.js`, `AddCustomerScreen.js`, `OrderScreen.js`, `NewOrderScreen.js`, `ConfirmOrderScreen.js`).
-  - `driver/`: Reserved directory for driver role screens.
+  - `driver/`: Driver screens (`DriverDashboardScreen.jsx`, `DriverMaintenanceScreen.jsx`, `DriverProfileScreen.jsx`).
+  - `features/`:
+    - `dashboard/screens/DriverDashboardScreen.jsx`: Shift attendance, trip status, emergency SOS with 60s cooldown, cabin quick-actions.
+    - `maintenance/screens/DriverMaintenanceScreen.jsx`: Telemetry, 5,000-km PM progress bar, grounding banner, service history, fuel refills.
+    - `profile/screens/DriverProfileScreen.jsx`: Driver credentials, truck plate & model, logout.
+    - `operations/components/`: Operational forms (`FuelEntryModal.jsx`, `ApprehensionModal.jsx`, `VehicleIssueModal.jsx`, `EmergencySosModal.jsx`).
 - **Component Organization (`src/components/`)**:
   - `ui/`: Universal UI primitives (`FadeInView.js`, `InputField.js`, `PasswordField.js`, `PrimaryButton.js`, `ContactField.js`).
   - `navigation/`: Dynamic navigation components (`BottomNav.js`).
   - `sales/`: Sales domain widgets (`CustomerCard.js`, `OrderSummaryDrawer.js`, `ProductOrderCard.js`, `QuantityControl.js`).
   - `driver/`: Reserved directory for driver domain widgets.
 - **App Entry (`App.js`)**:
-  - Root coordinator managing top-level session and tab state.
+  - Root coordinator managing top-level session, PaperProvider theming, and role-based screen routing (`isDriver` -> Driver Dashboard/Maintenance/Profile vs Sales Agent flow).
+
 
 ---
 

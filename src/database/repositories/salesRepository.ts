@@ -58,9 +58,9 @@ export const salesRepository = {
     const db = await getDatabase();
     const { order, items, canisterEntries, inventoryDeductions, customerDebtChange, syncQueueItem } = params;
 
-    await db.withExclusiveTransactionAsync(async () => {
+    await db.withExclusiveTransactionAsync(async (txn) => {
       // 1. Insert Sales Order
-      await db.runAsync(
+      await txn.runAsync(
         `INSERT INTO local_sales_orders (
           id, transaction_no, trip_id, customer_id, customer_name, receipt_number,
           total_amount, payment_method, payment_reference, transacted_at, synced_at, sync_status
@@ -83,7 +83,7 @@ export const salesRepository = {
 
       // 2. Insert Line Items
       for (const item of items) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO local_sales_items (
             id, sales_order_id, product_id, product_name, quantity_sold,
             empties_returned, empties_defective, unit_price, subtotal
@@ -104,7 +104,7 @@ export const salesRepository = {
 
       // 3. Insert Canister Ledger Entries
       for (const entry of canisterEntries) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO local_canister_ledger (
             id, customer_id, product_id, trip_id, transaction_id,
             quantity_loaned, quantity_returned, net_balance_change, transacted_at
@@ -125,7 +125,7 @@ export const salesRepository = {
 
       // 4. Decrement Remaining Truck Inventory
       for (const ded of inventoryDeductions) {
-        await db.runAsync(
+        await txn.runAsync(
           `UPDATE local_vehicle_inventory
            SET quantity_sold = quantity_sold + ?,
                quantity_remaining = quantity_remaining - ?
@@ -136,7 +136,7 @@ export const salesRepository = {
 
       // 5. Update Customer Canister Debt Balance
       if (customerDebtChange !== 0) {
-        await db.runAsync(
+        await txn.runAsync(
           `UPDATE local_customers
            SET canister_debt = canister_debt + ?
            WHERE id = ?;`,
@@ -145,7 +145,7 @@ export const salesRepository = {
       }
 
       // 6. Enqueue into sync_queue
-      await db.runAsync(
+      await txn.runAsync(
         `INSERT INTO sync_queue (
           id, operation_type, endpoint, payload, retry_count, status, created_at
         ) VALUES (?, ?, ?, ?, 0, 'PENDING', ?);`,
@@ -192,5 +192,15 @@ export const salesRepository = {
       'SELECT COALESCE(SUM(total_amount), 0) AS total FROM local_sales_orders;'
     );
     return row?.total || 0;
+  },
+
+  async markOrderSynced(orderId: string, syncedAt?: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE local_sales_orders
+       SET sync_status = 'SYNCED', synced_at = ?
+       WHERE id = ?;`,
+      [syncedAt || new Date().toISOString(), orderId]
+    );
   },
 };
