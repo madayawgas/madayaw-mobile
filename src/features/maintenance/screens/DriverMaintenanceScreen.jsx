@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ProgressBar } from 'react-native-paper';
@@ -24,6 +25,7 @@ const DriverMaintenanceScreen = ({ user, activeTab = 'maintenance', onSelectTab 
   const [healthData, setHealthData] = useState(null);
   const [activeSubTab, setActiveSubTab] = useState('pm'); // 'pm' | 'service' | 'fuel'
   const [showFuelModal, setShowFuelModal] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -35,6 +37,17 @@ const DriverMaintenanceScreen = ({ user, activeTab = 'maintenance', onSelectTab 
       setLoading(false);
     }
   }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadData();
+    } catch (e) {
+      console.warn('[DriverMaintenanceScreen] Error refreshing:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadData]);
 
   useEffect(() => {
     loadData();
@@ -89,9 +102,16 @@ const DriverMaintenanceScreen = ({ user, activeTab = 'maintenance', onSelectTab 
     <View className="flex-1 bg-white">
       <ScrollView
         className="flex-1"
-        bounces={false}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#ffffff"
+            colors={['#0d4761']}
+          />
+        }
       >
         {/* Header Section */}
         <View className="bg-[#0d4761] pt-14 pb-8 px-6 rounded-b-[32px]">

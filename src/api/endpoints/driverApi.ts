@@ -5,6 +5,7 @@ import {
   VehicleTelemetry,
   MaintenanceServiceLogItem,
   FuelLog,
+  DriverShift,
 } from '@/types';
 import {
   MOCK_VEHICLE_TELEMETRY,
@@ -98,6 +99,26 @@ export const driverApi = {
       status: 'OFF_DUTY',
       clockOutTime: d?.clockOutTime || d?.clock_out_time || now,
     };
+  },
+
+  async fetchActiveShift(userId?: string): Promise<DriverShift | null> {
+    if (ENV.USE_MOCK) return null;
+    try {
+      const endpoint = userId ? `/attendance/active?userId=${encodeURIComponent(userId)}` : '/attendance/active';
+      const res = await apiClient<any>(endpoint);
+      const d = res.data;
+      if (!d || !d.id) return null;
+      return {
+        id: d.id,
+        driver_id: d.userId || userId || '',
+        status: d.status === 'ACTIVE' || d.status === 'ON_DUTY' ? 'ON_DUTY' : 'OFF_DUTY',
+        clock_in_time: d.clockInTime || d.clock_in_time || null,
+        clock_out_time: d.clockOutTime || d.clock_out_time || null,
+        synced: true,
+      };
+    } catch {
+      return null;
+    }
   },
 
   // ==========================================

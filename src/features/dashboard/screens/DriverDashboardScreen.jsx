@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../../../components/navigation/BottomNav';
@@ -45,6 +46,7 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Load operational context
   const loadDashboardData = useCallback(async () => {
@@ -56,8 +58,12 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
         setIsOnDuty(true);
         if (data.shift.clock_in_time) {
           const startTime = new Date(data.shift.clock_in_time).getTime();
-          const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+          const elapsed = !isNaN(startTime)
+            ? Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+            : 0;
           setElapsedSeconds(elapsed);
+        } else {
+          setElapsedSeconds(0);
         }
       } else {
         setIsOnDuty(false);
@@ -69,6 +75,21 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
       setLoading(false);
     }
   }, [user]);
+
+  // Pull-to-refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadDashboardData();
+      if (isOnline) {
+        await syncScheduler.syncNow();
+      }
+    } catch (e) {
+      console.warn('[DriverDashboardScreen] Error refreshing:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadDashboardData, isOnline]);
 
   // Sync engine & network status listener
   useEffect(() => {
@@ -300,9 +321,16 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
     <View className="flex-1 bg-white">
       <ScrollView
         className="flex-1"
-        bounces={false}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#ffffff"
+            colors={['#0d4761']}
+          />
+        }
       >
         {/* Top App Bar / Header */}
         <View className="bg-[#0d4761] pt-14 pb-8 px-6 rounded-b-[32px]">

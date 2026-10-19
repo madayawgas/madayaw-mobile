@@ -89,4 +89,34 @@ export const syncQueueRepository = {
     );
     return row?.count || 0;
   },
+
+  /**
+   * Check if a specific operation type is pending in the queue for a given user.
+   */
+  async hasPendingOperation(userId: string, operationType: string): Promise<boolean> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sync_queue
+       WHERE (status = 'PENDING' OR status = 'FAILED')
+         AND (user_id = ? OR user_id IS NULL)
+         AND operation_type = ?;`,
+      [userId, operationType]
+    );
+    return (row?.count || 0) > 0;
+  },
+
+  /**
+   * Remove pending operations of specified types for a given user.
+   */
+  async removePendingOperations(userId: string, operationTypes: string[]): Promise<void> {
+    if (operationTypes.length === 0) return;
+    const db = await getDatabase();
+    const placeholders = operationTypes.map(() => '?').join(',');
+    await db.runAsync(
+      `DELETE FROM sync_queue
+       WHERE (user_id = ? OR user_id IS NULL)
+         AND operation_type IN (${placeholders});`,
+      [userId, ...operationTypes]
+    );
+  },
 };

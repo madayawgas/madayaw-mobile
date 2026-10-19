@@ -117,8 +117,29 @@ export const driverService = {
       }
     }
 
-    // 3. Fetch active shift
+    // 3. Fetch active shift (remote first if online to synchronize duty cycle, then local fallback)
     let shift = await driverRepository.getActiveShift(user.id);
+    if (networkSentinel.isOnline()) {
+      try {
+        const remoteShift = await driverApi.fetchActiveShift(user.id);
+        if (remoteShift && remoteShift.status === 'ON_DUTY') {
+          await driverRepository.saveShift(remoteShift);
+          shift = remoteShift;
+        } else if (!remoteShift || remoteShift.status === 'OFF_DUTY') {
+          // Server indicates driver is off-duty.
+          // Only maintain local ON_DUTY if there is a pending offline CLOCK_IN mutation in the sync queue.
+          const hasPendingClockIn = await syncQueueRepository.hasPendingOperation(user.id, 'CLOCK_IN');
+          if (!hasPendingClockIn) {
+            // No offline clock-in waiting: server state is authoritative. Close all local shifts.
+            await driverRepository.closeAllDriverShifts(user.id);
+            await syncQueueRepository.removePendingOperations(user.id, ['CLOCK_OUT']);
+            shift = await driverRepository.getActiveShift(user.id);
+          }
+        }
+      } catch (e) {
+        console.warn('[DriverService] Remote active shift check failed, using local shift:', e);
+      }
+    }
 
     // 4. Fetch pending sync count
     const pendingSyncCount = await syncQueueRepository.getPendingCount(user.id);
@@ -142,7 +163,10 @@ export const driverService = {
     const activeTrip = await tripRepository.getActiveTrip();
     const effectiveTruckId = truckId || localTelem?.truck_id || activeTrip?.truck_id || '';
 
-    const shift: DriverShift = {
+    // First ensure any previous unclosed shifts are marked closed so we don't have zombie rows
+    await driverRepository.closeAllDriverShifts(user.id, now);
+
+    let shift: DriverShift = {
       id: shiftId,
       driver_id: user.id,
       status: 'ON_DUTY',
@@ -155,21 +179,47 @@ export const driverService = {
     await driverRepository.saveShift(shift);
 
     let postedDirectly = false;
+    let openCycleAlreadyExists = false;
+
     if (networkSentinel.isOnline()) {
       try {
         const resp = await driverApi.clockIn(user.id, effectiveTruckId);
         if (resp.shiftId && resp.shiftId !== shift.id) {
+          await driverRepository.replaceShiftId(shift.id, resp.shiftId);
           shift.id = resp.shiftId;
         }
         shift.synced = true;
         await driverRepository.saveShift(shift);
         postedDirectly = true;
       } catch (e: any) {
-        console.warn('[DriverService] Remote clock-in failed, queued offline:', e.message);
+        const errMsg = e?.message || '';
+        const errCode = e?.data?.code || '';
+        if (
+          errCode === 'OPEN_DUTY_CYCLE_EXISTS' ||
+          errMsg.includes('already has an active open duty cycle')
+        ) {
+          console.log('[DriverService] User already clocked in on backend. Reconciling shift state.');
+          openCycleAlreadyExists = true;
+          try {
+            const remoteShift = await driverApi.fetchActiveShift(user.id);
+            if (remoteShift) {
+              await driverRepository.closeAllDriverShifts(user.id);
+              shift = remoteShift;
+            } else {
+              shift.synced = true;
+            }
+          } catch {
+            shift.synced = true;
+          }
+          await driverRepository.saveShift(shift);
+          postedDirectly = true;
+        } else {
+          console.warn('[DriverService] Remote clock-in failed, queued offline:', e.message);
+        }
       }
     }
 
-    if (!postedDirectly) {
+    if (!postedDirectly && !openCycleAlreadyExists) {
       await syncQueueRepository.enqueue({
         id: shift.id,
         user_id: user.id,
@@ -192,9 +242,13 @@ export const driverService = {
    * Clock out (End Shift)
    */
   async clockOut(user: UserSession): Promise<DriverShift> {
+    const now = new Date().toISOString();
+
+    // 1. Immediately close ALL open shifts for this driver in local SQLite
+    await driverRepository.closeAllDriverShifts(user.id, now);
+
     const existing = await driverRepository.getActiveShift(user.id);
     const shiftId = existing?.id || Crypto.randomUUID();
-    const now = new Date().toISOString();
 
     const shift: DriverShift = {
       id: shiftId,
@@ -208,18 +262,37 @@ export const driverService = {
     await driverRepository.saveShift(shift);
 
     let postedDirectly = false;
+    let cycleAlreadyClosed = false;
+
     if (networkSentinel.isOnline()) {
       try {
         await driverApi.clockOut(user.id, shiftId);
         shift.synced = true;
         await driverRepository.saveShift(shift);
+        await driverRepository.closeAllDriverShifts(user.id, now);
+        await syncQueueRepository.removePendingOperations(user.id, ['CLOCK_IN', 'CLOCK_OUT']);
         postedDirectly = true;
       } catch (e: any) {
-        console.warn('[DriverService] Remote clock-out failed, queued offline:', e.message);
+        const errMsg = e?.message || '';
+        const errCode = e?.data?.code || '';
+        if (
+          errCode === 'NO_ACTIVE_DUTY_CYCLE' ||
+          errMsg.includes('No active open duty cycle')
+        ) {
+          console.log('[DriverService] User already clocked out on backend.');
+          cycleAlreadyClosed = true;
+          shift.synced = true;
+          await driverRepository.saveShift(shift);
+          await driverRepository.closeAllDriverShifts(user.id, now);
+          await syncQueueRepository.removePendingOperations(user.id, ['CLOCK_IN', 'CLOCK_OUT']);
+          postedDirectly = true;
+        } else {
+          console.warn('[DriverService] Remote clock-out failed, queued offline:', e.message);
+        }
       }
     }
 
-    if (!postedDirectly) {
+    if (!postedDirectly && !cycleAlreadyClosed) {
       const isShiftIdUuid = Boolean(shiftId && UUID_REGEX.test(shiftId));
       const payload: Record<string, any> = {
         userId: user.id,

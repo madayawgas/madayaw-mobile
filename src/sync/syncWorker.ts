@@ -141,11 +141,49 @@ export const syncWorker = {
             await driverRepository.markShiftSynced(item.id);
             if (item.user_id) {
               await driverRepository.markShiftSynced(item.user_id);
+              if (item.operation_type === 'CLOCK_OUT') {
+                await driverRepository.closeAllDriverShifts(item.user_id);
+              }
             }
           }
 
           successfulQueueIds.push(item.id);
         } catch (err: any) {
+          const errMsg = err?.message || '';
+          const errCode = err?.data?.code || '';
+
+          // Idempotent attendance resolution:
+          // 1. CLOCK_IN: If user already has an active open duty cycle on server, state is satisfied
+          if (
+            item.operation_type === 'CLOCK_IN' &&
+            (errCode === 'OPEN_DUTY_CYCLE_EXISTS' ||
+              errMsg.includes('already has an active open duty cycle'))
+          ) {
+            console.log(`[SyncWorker] CLOCK_IN already active on server. Resolving queue item ${item.id}.`);
+            await driverRepository.markShiftSynced(item.id);
+            if (item.user_id) {
+              await driverRepository.markShiftSynced(item.user_id);
+            }
+            successfulQueueIds.push(item.id);
+            continue;
+          }
+
+          // 2. CLOCK_OUT: If user is already closed on server, state is satisfied
+          if (
+            item.operation_type === 'CLOCK_OUT' &&
+            (errCode === 'NO_ACTIVE_DUTY_CYCLE' ||
+              errMsg.includes('No active open duty cycle'))
+          ) {
+            console.log(`[SyncWorker] CLOCK_OUT already closed on server. Resolving queue item ${item.id}.`);
+            await driverRepository.markShiftSynced(item.id);
+            if (item.user_id) {
+              await driverRepository.markShiftSynced(item.user_id);
+              await driverRepository.closeAllDriverShifts(item.user_id);
+            }
+            successfulQueueIds.push(item.id);
+            continue;
+          }
+
           console.warn(`[SyncWorker] Operational mutation failed (${item.operation_type}):`, err.message);
           errors.push(err.message || `Sync failed for ${item.operation_type}`);
           await syncQueueRepository.incrementRetry(item.id, err.message);

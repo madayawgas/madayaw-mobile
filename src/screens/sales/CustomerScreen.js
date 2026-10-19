@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CustomerCard from '../../components/sales/CustomerCard';
@@ -18,29 +18,37 @@ const CustomerScreen = ({ activeTab, onSelectTab }) => {
   const [allProducts, setAllProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Sub-screen navigation states: 'list' | 'add' | 'details' | 'new_order' | 'confirm'
   const [subStep, setSubStep] = useState('list');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedProductIds, setSelectedProductIds] = useState([]);
 
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const [customerRes, productData] = await Promise.all([
-          fetchCustomers(),
-          fetchProducts(),
-        ]);
-        setCustomers(customerRes.data.customers);
-        setAllProducts(productData);
-      } catch (error) {
-        console.error(error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadInitialData();
+  const loadData = useCallback(async () => {
+    try {
+      const [customerRes, productData] = await Promise.all([
+        fetchCustomers(),
+        fetchProducts(),
+      ]);
+      setCustomers(customerRes.data.customers);
+      setAllProducts(productData);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData();
+  }, [loadData]);
 
   const filteredCustomers = customers.filter((item) =>
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -191,6 +199,14 @@ const CustomerScreen = ({ activeTab, onSelectTab }) => {
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#0d4761"
+                colors={['#0d4761']}
+              />
+            }
             renderItem={({ item }) => (
               <CustomerCard
                 name={item.name}

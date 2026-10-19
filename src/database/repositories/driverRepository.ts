@@ -13,6 +13,7 @@ export const driverRepository = {
   // ==========================================
   async getActiveShift(driverId: string): Promise<DriverShift | null> {
     const db = await getDatabase();
+    // Return the latest recorded shift for the driver by rowid (authoritative sequence)
     const row = await db.getFirstAsync<{
       id: string;
       driver_id: string;
@@ -21,7 +22,9 @@ export const driverRepository = {
       clock_out_time: string | null;
       synced: number;
     }>(
-      `SELECT * FROM local_driver_shift WHERE driver_id = ? ORDER BY id DESC LIMIT 1;`,
+      `SELECT * FROM local_driver_shift 
+       WHERE driver_id = ? 
+       ORDER BY rowid DESC LIMIT 1;`,
       [driverId]
     );
 
@@ -57,6 +60,34 @@ export const driverRepository = {
         shift.synced ? 1 : 0,
       ]
     );
+  },
+
+  /**
+   * Closes all active or open shifts for the driver in local SQLite, ensuring no orphaned ON_DUTY rows remain.
+   */
+  async closeAllDriverShifts(driverId: string, clockOutTime?: string): Promise<void> {
+    const db = await getDatabase();
+    const timestamp = clockOutTime || new Date().toISOString();
+    await db.runAsync(
+      `UPDATE local_driver_shift 
+       SET status = 'OFF_DUTY',
+           clock_out_time = COALESCE(clock_out_time, ?),
+           synced = 1
+       WHERE driver_id = ? AND (status = 'ON_DUTY' OR clock_out_time IS NULL);`,
+      [timestamp, driverId]
+    );
+  },
+
+  /**
+   * Replaces a client-generated temporary shift ID with a backend-assigned ID without duplicating rows.
+   */
+  async replaceShiftId(oldId: string, newId: string): Promise<void> {
+    if (oldId === newId) return;
+    const db = await getDatabase();
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync(`DELETE FROM local_driver_shift WHERE id = ?;`, [newId]);
+      await txn.runAsync(`UPDATE local_driver_shift SET id = ? WHERE id = ?;`, [newId, oldId]);
+    });
   },
 
   // ==========================================
@@ -285,7 +316,7 @@ export const driverRepository = {
     if (result.changes === 0) {
       await db.runAsync(
         `UPDATE local_driver_shift SET synced = 1 WHERE rowid IN (
-          SELECT rowid FROM local_driver_shift WHERE driver_id = ? ORDER BY id DESC LIMIT 1
+          SELECT rowid FROM local_driver_shift WHERE driver_id = ? ORDER BY clock_in_time DESC, rowid DESC LIMIT 1
         );`,
         [idOrDriverId]
       );

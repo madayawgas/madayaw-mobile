@@ -1,12 +1,33 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import BottomNav from '../../components/navigation/BottomNav';
 import DashboardDesign from '../../../assets/svg/dashboard-bg.svg';
 
 const DashboardScreen = ({ user, activeTab, onSelectTab }) => {
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 800);
+  }, []);
+
   return (
     <View className="flex-1 bg-white">
-      <ScrollView className="flex-1" bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#ffffff"
+            colors={['#0d4761']}
+          />
+        }
+      >
 
         {/* Header Section with SVG Background */}
         <View className="relative w-full h-72 bg-white">

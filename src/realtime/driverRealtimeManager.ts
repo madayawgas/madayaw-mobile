@@ -197,20 +197,39 @@ class DriverRealtimeManager {
 
     // 3. Duty Attendance Events
     this.bindEvent('ATTENDANCE_DUTY_UPDATED', async (data) => {
-      console.log('[DriverRealtime] ATTENDANCE_DUTY_UPDATED received:', data?.type);
+      console.log('[DriverRealtime] ATTENDANCE_DUTY_UPDATED received:', data?.status || data?.type);
       try {
         const session = await authService.getSession();
+        const targetUserId = data?.userId || session?.id;
         if (!data?.userId || data.userId === session?.id) {
-          const isOnDuty = data?.type === 'CLOCK_IN';
-          const shift: DriverShift = {
-            id: data?.attendanceId || `shift-${Date.now()}`,
-            driver_id: session?.id || data?.userId,
-            status: isOnDuty ? 'ON_DUTY' : 'OFF_DUTY',
-            clock_in_time: isOnDuty ? (data?.timestamp || new Date().toISOString()) : null,
-            clock_out_time: !isOnDuty ? (data?.clockOut || data?.timestamp || new Date().toISOString()) : null,
-            synced: true,
-          };
-          await driverRepository.saveShift(shift);
+          const isOnDuty =
+            data?.status === 'ON_DUTY' ||
+            data?.status === 'ACTIVE' ||
+            data?.type === 'CLOCK_IN';
+
+          if (isOnDuty) {
+            const shift: DriverShift = {
+              id: data?.attendanceId || `shift-${Date.now()}`,
+              driver_id: session?.id || targetUserId || '',
+              status: 'ON_DUTY',
+              clock_in_time: data?.clockInTime || data?.timestamp || new Date().toISOString(),
+              clock_out_time: null,
+              synced: true,
+            };
+            await driverRepository.saveShift(shift);
+          } else {
+            const clockOutTime =
+              data?.clockOutTime ||
+              data?.clockOut ||
+              data?.timestamp ||
+              new Date().toISOString();
+            if (session?.id) {
+              await driverRepository.closeAllDriverShifts(session.id, clockOutTime);
+            }
+            if (targetUserId && targetUserId !== session?.id) {
+              await driverRepository.closeAllDriverShifts(targetUserId, clockOutTime);
+            }
+          }
         }
       } catch (e) {
         console.warn('[DriverRealtime] Error updating shift attendance from socket:', e);
@@ -231,9 +250,9 @@ class DriverRealtimeManager {
   }
 
   private bindEvent(event: DriverRealtimeEventType, handler: (data: any) => Promise<void> | void): void {
-    const unbind = socketClient.on(event, (data) => {
+    const unbind = socketClient.on(event, async (data) => {
       try {
-        handler(data);
+        await handler(data);
       } catch (err) {
         console.error(`[DriverRealtime] Handler error for ${event}:`, err);
       }
