@@ -164,6 +164,13 @@ export const networkSentinel = {
     };
   },
 
+  /**
+   * Dedicated registration for offline -> online transition events.
+   */
+  onOnlineTransition(callback: () => void): () => void {
+    return networkSentinel.init(callback);
+  },
+
   isOnline(): boolean {
     return isCurrentlyOnline;
   },

@@ -7,14 +7,24 @@ export const syncQueueRepository = {
     const now = new Date().toISOString();
     await db.runAsync(
       `INSERT INTO sync_queue (
-        id, operation_type, endpoint, payload, retry_count, status, created_at
-      ) VALUES (?, ?, ?, ?, 0, 'PENDING', ?);`,
-      [item.id, item.operation_type, item.endpoint, item.payload, now]
+        id, user_id, operation_type, endpoint, payload, retry_count, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, 0, 'PENDING', ?);`,
+      [item.id, item.user_id || null, item.operation_type, item.endpoint, item.payload, now]
     );
   },
 
-  async getPendingItems(limit: number = 50): Promise<SyncQueueItem[]> {
+  async getPendingItems(userId?: string | null, limit: number = 50): Promise<SyncQueueItem[]> {
     const db = await getDatabase();
+    if (userId) {
+      return db.getAllAsync<SyncQueueItem>(
+        `SELECT * FROM sync_queue
+         WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < 5))
+           AND (user_id = ? OR user_id IS NULL)
+         ORDER BY created_at ASC
+         LIMIT ?;`,
+        [userId, limit]
+      );
+    }
     return db.getAllAsync<SyncQueueItem>(
       `SELECT * FROM sync_queue
        WHERE status = 'PENDING' OR (status = 'FAILED' AND retry_count < 5)
@@ -63,8 +73,17 @@ export const syncQueueRepository = {
     );
   },
 
-  async getPendingCount(): Promise<number> {
+  async getPendingCount(userId?: string | null): Promise<number> {
     const db = await getDatabase();
+    if (userId) {
+      const row = await db.getFirstAsync<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM sync_queue
+         WHERE (status = 'PENDING' OR status = 'FAILED')
+           AND (user_id = ? OR user_id IS NULL);`,
+        [userId]
+      );
+      return row?.count || 0;
+    }
     const row = await db.getFirstAsync<{ count: number }>(
       `SELECT COUNT(*) AS count FROM sync_queue WHERE status = 'PENDING' OR status = 'FAILED';`
     );

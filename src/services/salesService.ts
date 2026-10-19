@@ -225,6 +225,7 @@ export const salesService = {
       customerDebtChange: netCustomerDebtDelta,
       syncQueueItem: {
         id: orderId, // Use order ID for queue item to enforce 1:1 sync tracking
+        user_id: activeTrip.sales_user_id || 'sales-user',
         operation_type: isZeroSale ? 'ZERO_SALE_DECLARATION' : 'CREATE_ORDER',
         endpoint: '/sales/sync-batch',
         payload: JSON.stringify(syncPayload),

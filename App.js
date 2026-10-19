@@ -1,6 +1,6 @@
 import './global.css';
 import React, { useState, useEffect } from 'react';
-import { StatusBar } from 'react-native';
+import { StatusBar, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -15,6 +15,8 @@ import FadeInView from './src/components/ui/FadeInView';
 import { PaperProvider, MD3LightTheme } from 'react-native-paper';
 import { syncScheduler } from './src/sync';
 import { getDatabase } from './src/database';
+import { authService } from './src/services/authService';
+import { authApi } from './src/api/endpoints/authApi';
 
 const paperTheme = {
   ...MD3LightTheme,
@@ -32,12 +34,70 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState('dashboard');
 
   useEffect(() => {
-    // 1. Initialize local SQLite database schema
-    getDatabase().catch((err) => {
-      console.warn('[App] SQLite initialization error:', err);
+    let isMounted = true;
+
+    // 1. Subscribe to reactive session state changes (handles 401 revocation across any service)
+    const unsubAuth = authService.subscribe((session, reason) => {
+      if (!isMounted) return;
+
+      if (!session) {
+        setUser(null);
+        setCurrentTab('dashboard');
+        syncScheduler.setActiveUser(null);
+        if (reason === 'revoked') {
+          Alert.alert(
+            'Session Expired',
+            'Your session has expired or is no longer valid. Please log in again.'
+          );
+        }
+      } else {
+        setUser(session);
+        syncScheduler.setActiveUser(session.id);
+      }
     });
 
-    // 2. Start the Tri-Trigger Sync Engine (connectivity sentinel + 30s background sync polling)
+    const initApp = async () => {
+      try {
+        // 2. Await local SQLite database schema initialization and pre-migrations
+        await getDatabase();
+
+        // 3. Hydrate persistent session if token exists
+        const session = await authService.getSession();
+        if (!isMounted) return;
+
+        if (session && session.token) {
+          // 4. Validate session online, preserving offline usability in cellular dead zones
+          const validation = await authApi.validateSession();
+          if (!isMounted) return;
+
+          if (validation === 'revoked') {
+            setUser(null);
+            syncScheduler.setActiveUser(null);
+            Alert.alert(
+              'Session Expired',
+              'Your session has expired or is no longer valid. Please log in again.'
+            );
+          } else {
+            // 'valid' or 'offline'
+            setUser(session);
+            syncScheduler.setActiveUser(session.id);
+          }
+        } else {
+          setUser(null);
+          syncScheduler.setActiveUser(null);
+        }
+      } catch (err) {
+        console.warn('[App] Initialization error:', err);
+        if (isMounted) {
+          syncScheduler.setActiveUser(null);
+          setUser(null);
+        }
+      }
+    };
+
+    initApp();
+
+    // 5. Start the Tri-Trigger Sync Engine (connectivity sentinel + 30s background sync polling)
     const cleanupSync = syncScheduler.start();
 
     const timer = setTimeout(() => {
@@ -45,12 +105,27 @@ export default function App() {
     }, 2000);
 
     return () => {
+      isMounted = false;
       clearTimeout(timer);
       if (cleanupSync) cleanupSync();
+      if (unsubAuth) unsubAuth();
     };
   }, []);
 
-  const handleLogout = () => {
+  const handleLogin = (userData) => {
+    setUser(userData);
+    if (userData && userData.id) {
+      syncScheduler.setActiveUser(userData.id);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authService.clearSession('logout');
+    } catch (_e) {
+      // ignore
+    }
+    syncScheduler.setActiveUser(null);
     setUser(null);
     setCurrentTab('dashboard');
   };
@@ -141,7 +216,7 @@ export default function App() {
           renderActiveScreen()
         ) : (
           <FadeInView key="login">
-            <LoginScreen onLogin={(userData) => setUser(userData)} />
+            <LoginScreen onLogin={handleLogin} />
           </FadeInView>
         )}
       </PaperProvider>

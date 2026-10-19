@@ -72,30 +72,55 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
   - Probes `BACKEND_HEALTH_URL` (derived dynamically from `ENV.API_URL.replace(/\/api\/?$/, '') + '/health'`) rather than public third-party WAN servers (e.g. Google `generate_204`). This ensures accurate reachability detection on private LAN development setups and offline intranet deployments.
   - **Adaptive Heartbeat Polling**: Probes `/health` every 15s while online, and every 5s while offline for rapid backend recovery detection. Probes immediately when the app returns to the foreground via `AppState`.
   - **Fail-Fast Trigger (`reportNetworkFailure()`)**: Invoked by `apiClient` and `mediaService` whenever a request encounters a network error (status 0 or 408 timeout), immediately dropping state to offline and starting rapid 5s recovery polling.
-- **Dual Direct-or-Queue Path**:
-  - When device is online: Operations attempt direct upload with short timeouts. If successful, local records are marked `synced = 1`. If upload times out or fails, mutations automatically enqueue to `sync_queue` without halting the user.
-  - When device is offline: Operations instantly persist to local SQLite and enqueue to `sync_queue` in single-digit milliseconds without triggering network timeouts.
+- **Dual Direct-or-Queue Path & Multi-User Partitioning**:
+  - When device is online: Operations attempt direct upload with short timeouts. If successful, local records are marked `synced = 1`. If upload times out or fails, mutations automatically enqueue to `sync_queue` tagged with `user_id`.
+  - When device is offline: Operations instantly persist to local SQLite and enqueue to `sync_queue` tagged with `user_id` in single-digit milliseconds without triggering network timeouts.
+  - **Multi-User Data Isolation on Shared Cabin Devices**: Every mutation in `sync_queue` records `user_id`. When User A logs out and User B logs in on the same roving device, sync runs strictly scoped to User B's pending mutations under User B's Bearer token. User A's items remain untouched in SQLite, preventing 403 Forbidden errors or data cross-contamination.
+- **Auth-Gated Sync Coordinator (`syncScheduler.ts`)**:
+  - Strictly requires an active authenticated session (`authService.getSession()`). Unauthenticated boots or logged-out states halt sync cycles completely, producing zero network calls and zero 401 Unauthorized errors.
+  - On login, `syncScheduler.setActiveUser(userId)` hydrates active user context, scopes pending item counts, and triggers an immediate sync if online. On logout, active context clears and sync halts.
+  - **Reactive UI Badge Updates**: Components subscribe to `syncScheduler.subscribe` to receive real-time updates for `isOnline`, `isSyncing`, and `pendingCount`. When an automatic background sync succeeds, the badge reactively drops to 0 and clears from view.
 - **Cache-First Media Architecture (`mediaService.ts`)**:
   - Images are compressed and stored in persistent offline storage (`offline_media/`) first.
   - When offline, form submissions (fuel receipts, apprehension citations, incident photos) completely bypass remote uploads, queueing with the local cached `file://` URI in < 50ms.
   - When online, `mediaService.uploadMedia` races `FileSystem.uploadAsync` against a 6-second timeout to prevent 60-second native socket hangs.
 - **Tri-Trigger Coordinator (`syncScheduler.ts`)**:
   1. Network connectivity restored (offline -> online transition automatically detected by 5s probe).
-  2. 30-second heartbeat interval while online.
+  2. 30-second heartbeat interval while online (authenticated only).
   3. Immediate sales trigger / Manual user trigger (`syncNow()`).
   - **Guarded Manual Syncing**: `syncNow()` verifies backend reachability and blocks execution when offline (`offline: true`). Screen UI validates `SyncResult` counts (`synced`, `failed`) to prevent false-positive success notifications.
 - **Sync Worker (`syncWorker.ts`)**:
-  - Operational mutations (`CLOCK_IN`, `CLOCK_OUT`, `LOG_FUEL`, `REPORT_APPREHENSION`, `REPORT_ISSUE`, `EMERGENCY_SOS`) replay directly to their designated REST endpoints (`item.endpoint`) with individual error logging and retry incrementing.
+  - Operational mutations (`CLOCK_IN`, `CLOCK_OUT`, `LOG_FUEL`, `REPORT_APPREHENSION`, `REPORT_ISSUE`, `EMERGENCY_SOS`) replay directly to their designated REST endpoints (`item.endpoint`) scoped to the active user's `user_id`.
   - Automatically checks for offline cached file URIs (`file:///`) in operational payloads, uploads the image to `/api/media/upload`, updates the payload with the storage key and remote URL, and marks the corresponding local SQLite row (`local_fuel_logs`, `local_apprehensions`, `local_incidents`, `local_driver_shift`) as `synced = 1`. If media upload fails, the mutation is kept queued for the next cycle without sending invalid local URIs to the endpoint.
   - Sales order mutations (`CREATE_ORDER`) batch chronologically to `POST /api/sales/sync-batch`, mapping backend `{ tripId, processedCount, transactionIds }`, updating `sync_queue` and setting `local_sales_orders.sync_status = 'SYNCED'`.
-- **Session & Invalidation Invariants (`apiClient.ts`)**:
-  - `apiClient` preserves authenticated sessions on `403 Forbidden` (permission denied on specific resources). Sessions are only cleared on genuine `401 Unauthorized` responses where an active token was provided.
+- **Session & Invalidation Invariants (`apiClient.ts`, `authService.ts`, `App.js`)**:
+  - `apiClient` preserves authenticated sessions on `403 Forbidden` (permission denied on specific resources). Sessions are only cleared on genuine `401 Unauthorized` responses where an active token was provided, passing reason `'revoked'`.
+  - **Reactive Session Subscription (`authService.ts`)**: `authService.subscribe((session, reason) => void)` emits session state changes across the application. When backend revokes a session (401), `authService.clearSession('revoked')` debounces concurrent requests with a 3-second guard to prevent alert spamming and broadcasts to subscribers.
+  - **Auto-Logout & UI Synchronization (`App.js`)**: `App.js` listens to `authService.subscribe`, immediately clearing active `user`, resetting `currentTab`, halting `syncScheduler`, and displaying a clean `Alert.alert('Session Expired', ...)` prompt.
+  - **Boot-Time Auto-Login Validation (`authApi.validateSession()`)**: During `initApp()`, cached credentials are validated against `GET /api/users/me` with a fast 2.5-second timeout.
+    - If valid (200 OK): auto-login proceeds.
+    - If revoked (401): session is purged, auto-login halts, and the user remains on `LoginScreen` with the session expired prompt.
+    - If offline / timeout (408 or 0): user is allowed to proceed offline with cached session, upholding the critical offline-first DSD operational requirement.
   - Timeout defaults to 6s with clean `408 Timeout/Offline` classification and automated failover notification to `networkSentinel`.
 - **Dynamic Truck & Driver Context Hydration (`driverService.ts`)**:
   - Resolves active trip assignments via `GET /api/trips/active-assignment` and vehicle telemetry via `GET /api/fleet/my-vehicle`, caching to `local_active_trip` and `local_vehicle_telemetry`.
+  - **Safe Trip Hydration & Constraint Integrity**: When a driver or salesperson has no assigned active trip, backend returns `{ data: { trip: null } }`. `tripApi` and `driverService` normalize this to `null` and bypass saving, preventing SQLite `NOT NULL constraint failed: local_active_trip.trip_number` errors. When active trips exist, robust multi-layer property fallbacks (`tripNumber ?? trip_number ?? TRIP-<id>`) guarantee constraint compliance.
+  - **Duty Attendance UUID Invariants**: Frontend shift records generate valid UUIDs (`Crypto.randomUUID()`). `driverApi.clockOut` and `syncWorker` validate `attendanceId` against UUID regex (`/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`), omitting the field if non-UUID to allow backend PostgreSQL to resolve active duty cycles cleanly via `userId` without UUID syntax errors.
+  - **Cabin Duty Action Pending Feedback**: Start Shift and End Shift actions in `DriverDashboardScreen.jsx` are guarded by `isDutyActionPending`, displaying loading indicators and disabling buttons to prevent double submissions and UI freezes during network latency.
   - Zero hardcoded vehicle/user UUIDs in business services; dynamic fallback based on loaded trip and cache.
   - Mock data strictly gated by `ENV.USE_MOCK`: zero mock leakage in live/production mode.
-
+- **Frontline Real-Time WebSocket Engine (`src/realtime/`)**:
+  - **Socket.IO v4.8.x Architecture (`socketClient.ts`)**:
+    - Connects to backend Socket.IO server via `['websocket', 'polling']` transports with session Bearer token in handshake `auth`.
+    - Reactive lifecycle bound to `authService.subscribe` (connects on login, disconnects on logout) and `networkSentinel` (disconnects when entering cellular dead zones, reconnects on `networkSentinel.onOnlineTransition()`).
+    - Standardized application envelope `{ event, data, meta }` with safe parsing and simulation support under `ENV.USE_MOCK`.
+    - Central listener for `AUTH_SESSION_REVOKED`: immediately terminates socket connection, invokes `authService.clearSession('revoked')`, and routes back to login.
+  - **Frontline Driver Event Dispatcher (`driverRealtimeManager.ts`)**:
+    - **Live Trip Lifecycle**: Handles `TRIP_DISPATCHED`, `TRIP_LOAD_RECORDED`, `TRIP_COMPLETED`, `TRIP_CANCELLED`, and `TRIP_RECONCILED`. Automatically hydrates `local_active_trip` in SQLite and reactively updates `DriverDashboardScreen` from idle standby to active trip delivery.
+    - **Fleet Readiness & Grounding**: Handles `FLEET_VEHICLE_GROUNDED` and `FLEET_VEHICLE_RELEASED`, updating `local_vehicle_telemetry.status` in SQLite. Reactively renders or dismisses the prominent red `VEHICLE GROUNDED` exception banner in `DriverMaintenanceScreen` without pull-to-refresh.
+    - **Emergency SOS Supervisor Triage**: Handles `EMERGENCY_ALERT_STATUS_UPDATED`, immediately notifying frontline drivers via alerts/prompts when supervisors acknowledge or resolve their emergency alerts.
+    - **Duty Attendance & Vehicle Assignment**: Handles `ATTENDANCE_DUTY_UPDATED` (syncing shift clock-in/out to `local_driver_shift`) and `VEHICLE_DRIVER_ASSIGNED` / `VEHICLE_DRIVER_UNASSIGNED` (updating truck plate in cabin header and driver profile).
+    - **Additive Write Independence**: Sockets are strictly additive observers. All field mutations (orders, SOS alerts, shifts) persist atomically to local SQLite and `sync_queue` regardless of socket connection state.
 
 ---
 

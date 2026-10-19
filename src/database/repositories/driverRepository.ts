@@ -279,9 +279,17 @@ export const driverRepository = {
   // ==========================================
   // 6. Sync Queue Status Synchronization
   // ==========================================
-  async markShiftSynced(id: string): Promise<void> {
+  async markShiftSynced(idOrDriverId: string): Promise<void> {
     const db = await getDatabase();
-    await db.runAsync(`UPDATE local_driver_shift SET synced = 1 WHERE id = ?;`, [id]);
+    const result = await db.runAsync(`UPDATE local_driver_shift SET synced = 1 WHERE id = ?;`, [idOrDriverId]);
+    if (result.changes === 0) {
+      await db.runAsync(
+        `UPDATE local_driver_shift SET synced = 1 WHERE rowid IN (
+          SELECT rowid FROM local_driver_shift WHERE driver_id = ? ORDER BY id DESC LIMIT 1
+        );`,
+        [idOrDriverId]
+      );
+    }
   },
 
   async markFuelLogSynced(id: string): Promise<void> {

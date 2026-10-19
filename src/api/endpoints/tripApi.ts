@@ -13,7 +13,8 @@ export const tripApi = {
     const res = await apiClient<any>('/trips/active-assignment', {
       method: 'GET',
     });
-    const trip = res.data?.trip || res.data;
+    const rawTrip = res.data?.trip !== undefined ? res.data.trip : res.data;
+    const trip = (rawTrip && typeof rawTrip === 'object' && rawTrip.id) ? rawTrip : null;
     return { trip };
   },
 

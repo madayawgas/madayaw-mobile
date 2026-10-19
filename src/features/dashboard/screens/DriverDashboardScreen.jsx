@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../../../components/navigation/BottomNav';
 import { driverService } from '@/services/driverService';
 import { syncScheduler } from '@/sync/syncScheduler';
-import { networkSentinel } from '@/sync/networkSentinel';
+import { socketClient } from '@/realtime';
 import FuelEntryModal from '../../operations/components/FuelEntryModal';
 import ApprehensionModal from '../../operations/components/ApprehensionModal';
 import VehicleIssueModal from '../../operations/components/VehicleIssueModal';
@@ -27,10 +27,12 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
   const [loading, setLoading] = useState(true);
   const [context, setContext] = useState(null);
   const [isOnline, setIsOnline] = useState(true);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
 
   // Shift Attendance & Timer State
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isDutyActionPending, setIsDutyActionPending] = useState(false);
   const timerRef = useRef(null);
 
   // Emergency SOS Cooldown State (60 seconds)
@@ -68,14 +70,91 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
     }
   }, [user]);
 
-  // Network & backend reachability listener
+  // Sync engine & network status listener
   useEffect(() => {
-    setIsOnline(networkSentinel.isOnline());
-    const unsubscribe = networkSentinel.subscribe((online) => {
-      setIsOnline(online);
+    const unsubscribe = syncScheduler.subscribe((status) => {
+      setIsOnline(status.isOnline);
+      setIsSyncing(status.isSyncing);
+      setContext((prev) => (prev ? { ...prev, pendingSyncCount: status.pendingCount } : prev));
     });
     return () => unsubscribe();
   }, []);
+
+  // Real-Time Socket Connection & Frontline Events Listener
+  useEffect(() => {
+    const unsubSocket = socketClient.subscribeConnection((connected) => {
+      setIsSocketConnected(connected);
+    });
+
+    const unsubRealtime = driverService.subscribeRealtime((event, data) => {
+      console.log('[DriverDashboardScreen] Realtime event received:', event);
+
+      switch (event) {
+        case 'TRIP_DISPATCHED':
+          loadDashboardData();
+          Alert.alert(
+            '🚚 New Trip Dispatched',
+            `Trip ${data?.tripNumber || ''} has been assigned and dispatched to your cabin. Have a safe route delivery!`
+          );
+          break;
+
+        case 'TRIP_LOAD_RECORDED':
+          loadDashboardData();
+          Alert.alert(
+            '📦 Load Slip Recorded',
+            `Slip ${data?.slipNumber || ''} recorded with ${data?.itemCount || 0} unit(s). Onboard inventory updated.`
+          );
+          break;
+
+        case 'TRIP_COMPLETED':
+        case 'TRIP_RECONCILED':
+          loadDashboardData();
+          break;
+
+        case 'TRIP_CANCELLED':
+          loadDashboardData();
+          Alert.alert(
+            '⚠️ Route Trip Cancelled',
+            `Trip ${data?.tripNumber || ''} was cancelled by logistics dispatch. Reason: ${data?.reason || 'Route cancelled'}.`
+          );
+          break;
+
+        case 'ATTENDANCE_DUTY_UPDATED':
+          loadDashboardData();
+          break;
+
+        case 'VEHICLE_DRIVER_ASSIGNED':
+          loadDashboardData();
+          Alert.alert(
+            '🚛 Vehicle Assigned',
+            `You have been assigned to delivery vehicle ${data?.plateNumber || ''}. Telemetry updated.`
+          );
+          break;
+
+        case 'EMERGENCY_ALERT_STATUS_UPDATED':
+          if (data?.status === 'ACKNOWLEDGED') {
+            Alert.alert(
+              '🚨 Emergency SOS Acknowledged',
+              `Supervisor ${data?.acknowledgedByName || 'Supervisor'} has acknowledged your emergency alert. Operations team is responding!`
+            );
+          } else if (data?.status === 'RESOLVED') {
+            Alert.alert(
+              '✅ Emergency SOS Resolved',
+              `Your emergency SOS has been marked resolved: ${data?.resolutionNotes || 'Situation resolved'}.`
+            );
+          }
+          break;
+
+        default:
+          break;
+      }
+    });
+
+    return () => {
+      unsubSocket();
+      unsubRealtime();
+    };
+  }, [loadDashboardData]);
 
   // Initial load
   useEffect(() => {
@@ -118,6 +197,8 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
 
   // Shift Attendance Handlers
   const handleStartShift = async () => {
+    if (isDutyActionPending) return;
+    setIsDutyActionPending(true);
     try {
       const shift = await driverService.clockIn(user, context?.telemetry?.truck_id);
       setIsOnDuty(true);
@@ -126,10 +207,13 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
       Alert.alert('Shift Started', 'Duty attendance recorded. Have a safe route delivery!');
     } catch (e) {
       Alert.alert('Error', e.message || 'Failed to start shift');
+    } finally {
+      setIsDutyActionPending(false);
     }
   };
 
   const handleEndShift = () => {
+    if (isDutyActionPending) return;
     Alert.alert(
       'End Shift',
       'Are you sure you want to clock out and end your duty shift for today?',
@@ -139,6 +223,7 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
           text: 'Confirm End Shift',
           style: 'destructive',
           onPress: async () => {
+            setIsDutyActionPending(true);
             try {
               const shift = await driverService.clockOut(user);
               setIsOnDuty(false);
@@ -147,6 +232,8 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
               Alert.alert('Shift Ended', 'You are now off-duty. Rest well!');
             } catch (e) {
               Alert.alert('Error', e.message || 'Failed to end shift');
+            } finally {
+              setIsDutyActionPending(false);
             }
           },
         },
@@ -224,11 +311,11 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
             <View className="flex-row items-center bg-white/10 px-3 py-1.5 rounded-full">
               <View
                 className={`w-2 h-2 rounded-full mr-2 ${
-                  isOnline ? 'bg-emerald-400' : 'bg-amber-400'
+                  isOnline ? (isSocketConnected ? 'bg-emerald-400' : 'bg-emerald-300') : 'bg-amber-400'
                 }`}
               />
               <Text className="text-white text-xs font-semibold">
-                {isOnline ? 'Online' : 'Offline Mode'}
+                {isOnline ? (isSocketConnected ? 'Live' : 'Online') : 'Offline Mode'}
               </Text>
               {context?.pendingSyncCount && context.pendingSyncCount > 0 ? (
                 <TouchableOpacity
@@ -314,11 +401,18 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
 
                   <TouchableOpacity
                     onPress={handleEndShift}
-                    className="bg-red-50 border border-red-200 px-5 py-3 rounded-xl flex-row items-center"
+                    disabled={isDutyActionPending}
+                    className={`bg-red-50 border border-red-200 px-5 py-3 rounded-xl flex-row items-center ${
+                      isDutyActionPending ? 'opacity-50' : 'active:opacity-80'
+                    }`}
                   >
-                    <Ionicons name="log-out-outline" size={18} color="#dc2626" />
+                    {isDutyActionPending ? (
+                      <ActivityIndicator size="small" color="#dc2626" style={{ marginRight: 6 }} />
+                    ) : (
+                      <Ionicons name="log-out-outline" size={18} color="#dc2626" />
+                    )}
                     <Text className="text-red-600 text-xs font-bold uppercase ml-1.5">
-                      End Shift
+                      {isDutyActionPending ? 'Ending...' : 'End Shift'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -329,11 +423,18 @@ const DriverDashboardScreen = ({ user, activeTab = 'dashboard', onSelectTab }) =
                   </Text>
                   <TouchableOpacity
                     onPress={handleStartShift}
-                    className="bg-[#0d4761] py-3.5 rounded-xl flex-row items-center justify-center shadow-sm"
+                    disabled={isDutyActionPending}
+                    className={`bg-[#0d4761] py-3.5 rounded-xl flex-row items-center justify-center shadow-sm ${
+                      isDutyActionPending ? 'opacity-50' : 'active:opacity-90'
+                    }`}
                   >
-                    <Ionicons name="play" size={16} color="#facc15" />
+                    {isDutyActionPending ? (
+                      <ActivityIndicator size="small" color="#facc15" style={{ marginRight: 8 }} />
+                    ) : (
+                      <Ionicons name="play" size={16} color="#facc15" />
+                    )}
                     <Text className="text-white text-sm font-bold uppercase ml-2 tracking-wider">
-                      Start Shift (Clock In)
+                      {isDutyActionPending ? 'Starting Duty...' : 'Start Shift (Clock In)'}
                     </Text>
                   </TouchableOpacity>
                 </View>

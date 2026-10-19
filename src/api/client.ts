@@ -66,7 +66,7 @@ export async function apiClient<T>(
         const storedToken = await authService.getStoredToken();
         if (storedToken) {
           console.warn(`[ApiClient] Received 401 with active token. Session revoked on backend.`);
-          await authService.clearSession();
+          await authService.clearSession('revoked');
         }
       }
 

@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS local_canister_ledger (
 -- 7. Store-and-Forward Mutation Sync Queue
 CREATE TABLE IF NOT EXISTS sync_queue (
   id TEXT PRIMARY KEY,
+  user_id TEXT,
   operation_type TEXT NOT NULL,
   endpoint TEXT NOT NULL,
   payload TEXT NOT NULL,
@@ -179,6 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_search ON local_customers (business_nam
 CREATE INDEX IF NOT EXISTS idx_sales_orders_trip ON local_sales_orders (trip_id);
 CREATE INDEX IF NOT EXISTS idx_sales_items_order ON local_sales_items (sales_order_id);
 CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_sync_queue_user_status ON sync_queue (user_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_fuel_logs_truck ON local_fuel_logs (truck_id, logged_at);
 CREATE INDEX IF NOT EXISTS idx_apprehensions_truck ON local_apprehensions (truck_id, reported_at);
 `;

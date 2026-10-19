@@ -5,6 +5,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ProgressBar } from 'react-native-paper';
@@ -37,6 +38,39 @@ const DriverMaintenanceScreen = ({ user, activeTab = 'maintenance', onSelectTab 
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Frontline Vehicle Fleet Real-Time Events Listener
+  useEffect(() => {
+    const unsubscribe = driverService.subscribeRealtime((event, data) => {
+      switch (event) {
+        case 'FLEET_VEHICLE_GROUNDED':
+          loadData();
+          Alert.alert(
+            '⚠️ Vehicle Grounded',
+            `Truck ${data?.plateNumber || ''} has been grounded for maintenance (${data?.findings || data?.reason || 'Failed inspection'}). Do not depart yard until cleared.`
+          );
+          break;
+
+        case 'FLEET_VEHICLE_RELEASED':
+          loadData();
+          Alert.alert(
+            '✅ Vehicle Cleared',
+            `Maintenance servicing complete. Truck ${data?.plateNumber || ''} has been cleared and released for active route operations!`
+          );
+          break;
+
+        case 'VEHICLE_STATUS_UPDATED':
+        case 'VEHICLE_DRIVER_ASSIGNED':
+          loadData();
+          break;
+
+        default:
+          break;
+      }
+    });
+
+    return () => unsubscribe();
   }, [loadData]);
 
   const telemetry = healthData?.telemetry;

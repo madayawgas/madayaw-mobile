@@ -2,6 +2,8 @@ import { syncQueueRepository, tripRepository, driverRepository, salesRepository 
 import { syncApi } from '@/api';
 import { apiClient } from '@/api/client';
 import { mediaService } from '@/services/mediaService';
+import { authService } from '@/services/authService';
+import { UUID_REGEX } from '@/api/endpoints/driverApi';
 import { SyncBatchRequest, SyncBatchItemPayload } from '@/types';
 
 let isSyncing = false;
@@ -21,27 +23,38 @@ export const syncWorker = {
 
   /**
    * Executes a single batch upload cycle for pending sync_queue records.
+   * Strictly gated on an active authenticated session and user_id scoping.
    */
-  async runSyncCycle(batchSize: number = 25): Promise<SyncResult> {
+  async runSyncCycle(batchSize: number = 25, activeUserId?: string): Promise<SyncResult> {
     if (isSyncing) {
       console.log('[SyncWorker] Sync already in progress. Skipping cycle.');
       return { attempted: 0, synced: 0, failed: 0 };
     }
 
+    // 1. Session verification invariant: Do NOT sync without an authenticated session!
+    const session = await authService.getSession();
+    if (!session || !session.token) {
+      console.log('[SyncWorker] No active authenticated session found. Sync cycle skipped.');
+      return { attempted: 0, synced: 0, failed: 0 };
+    }
+
+    const currentUserId = activeUserId || session.id;
+
     isSyncing = true;
     const errors: string[] = [];
 
     try {
-      const pendingItems = await syncQueueRepository.getPendingItems(batchSize);
+      // 2. Fetch pending items strictly scoped to the active user
+      const pendingItems = await syncQueueRepository.getPendingItems(currentUserId, batchSize);
       if (pendingItems.length === 0) {
         return { attempted: 0, synced: 0, failed: 0 };
       }
 
-      console.log(`[SyncWorker] Ingesting ${pendingItems.length} queued mutation(s)...`);
+      console.log(`[SyncWorker] Ingesting ${pendingItems.length} queued mutation(s) for user ${currentUserId}...`);
 
       const activeTrip = await tripRepository.getActiveTrip();
       const tripId = activeTrip?.trip_id || 'unassigned-trip';
-      const salesUserId = activeTrip?.sales_user_id || 'unassigned-user';
+      const salesUserId = activeTrip?.sales_user_id || currentUserId || 'unassigned-user';
 
       const successfulQueueIds: string[] = [];
 
@@ -103,6 +116,15 @@ export const syncWorker = {
             }
           }
 
+          if (item.operation_type === 'CLOCK_OUT') {
+            if (payloadObj.attendanceId && !UUID_REGEX.test(payloadObj.attendanceId)) {
+              delete payloadObj.attendanceId;
+            }
+            if (payloadObj.shiftId && !UUID_REGEX.test(payloadObj.shiftId)) {
+              delete payloadObj.shiftId;
+            }
+          }
+
           await apiClient(item.endpoint, {
             method: 'POST',
             body: JSON.stringify(payloadObj),
@@ -117,6 +139,9 @@ export const syncWorker = {
             await driverRepository.markVehicleIssueSynced(item.id);
           } else if (item.operation_type === 'CLOCK_IN' || item.operation_type === 'CLOCK_OUT') {
             await driverRepository.markShiftSynced(item.id);
+            if (item.user_id) {
+              await driverRepository.markShiftSynced(item.user_id);
+            }
           }
 
           successfulQueueIds.push(item.id);

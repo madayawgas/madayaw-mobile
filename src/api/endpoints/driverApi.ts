@@ -26,6 +26,8 @@ export interface ClockOutResponseData {
   clockOutTime: string;
 }
 
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const driverApi = {
   // ==========================================
   // 1. Shift Attendance Endpoints
@@ -73,16 +75,21 @@ export const driverApi = {
     }
 
     const now = new Date().toISOString();
+    const isShiftIdUuid = Boolean(shiftId && UUID_REGEX.test(shiftId));
+    const payload: Record<string, any> = {
+      userId: driverId,
+      driverId,
+      clockOutTime: now,
+      timestamp: now,
+    };
+    if (isShiftIdUuid) {
+      payload.attendanceId = shiftId;
+      payload.shiftId = shiftId;
+    }
+
     const res = await apiClient<any>('/attendance/clock-out', {
       method: 'POST',
-      body: JSON.stringify({
-        attendanceId: shiftId,
-        shiftId,
-        userId: driverId,
-        driverId,
-        clockOutTime: now,
-        timestamp: now,
-      }),
+      body: JSON.stringify(payload),
     });
     const d = res.data;
     return {
@@ -107,7 +114,6 @@ export const driverApi = {
       };
     }
 
-    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const body: Record<string, any> = {
       driverId: payload.driverId,
       emergencyType: payload.emergencyType || (payload as any).emergency_type || 'OTHER',

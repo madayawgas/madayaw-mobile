@@ -18,17 +18,39 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   }
 
   initPromise = (async () => {
-    const db = await SQLite.openDatabaseAsync('madayawgas.db');
+    try {
+      const db = await SQLite.openDatabaseAsync('madayawgas.db');
 
-    // Enable WAL mode for high concurrency and resilience against app kills
-    await db.execAsync('PRAGMA journal_mode = WAL;');
-    await db.execAsync('PRAGMA foreign_keys = ON;');
+      // Enable WAL mode for high concurrency and resilience against app kills
+      await db.execAsync('PRAGMA journal_mode = WAL;');
+      await db.execAsync('PRAGMA foreign_keys = ON;');
 
-    // Execute schema tables and indexes
-    await db.execAsync(SCHEMA_SQL);
+      // 1. PRE-MIGRATION: Ensure user_id column exists on sync_queue BEFORE executing SCHEMA_SQL indexes
+      try {
+        const tableCheck = await db.getFirstAsync<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue';"
+        );
+        if (tableCheck) {
+          const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(sync_queue);");
+          const hasUserId = columns.some((c) => c.name === 'user_id');
+          if (!hasUserId) {
+            console.log('[Database] Migrating sync_queue: adding user_id column...');
+            await db.execAsync('ALTER TABLE sync_queue ADD COLUMN user_id TEXT;');
+          }
+        }
+      } catch (migErr) {
+        console.warn('[Database] Pre-migration check warning:', migErr);
+      }
 
-    dbInstance = db;
-    return db;
+      // 2. Execute schema tables and indexes (including idx_sync_queue_user_status)
+      await db.execAsync(SCHEMA_SQL);
+
+      dbInstance = db;
+      return db;
+    } catch (err) {
+      initPromise = null;
+      throw err;
+    }
   })();
 
   return initPromise;

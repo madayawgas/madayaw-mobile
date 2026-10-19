@@ -126,6 +126,7 @@ export type SyncOperationType =
 
 export interface SyncQueueItem {
   id: string; // UUID
+  user_id?: string | null;
   operation_type: SyncOperationType;
   endpoint: string;
   payload: string; // JSON serialized string

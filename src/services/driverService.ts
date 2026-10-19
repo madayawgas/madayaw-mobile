@@ -1,10 +1,12 @@
 import * as Location from 'expo-location';
+import * as Crypto from 'expo-crypto';
 import {
   driverRepository,
   tripRepository,
   syncQueueRepository,
 } from '@/database';
 import { driverApi, tripApi } from '@/api';
+import { UUID_REGEX } from '@/api/endpoints/driverApi';
 import {
   UserSession,
   DriverShift,
@@ -23,6 +25,7 @@ import { mediaService } from './mediaService';
 import { MOCK_VEHICLE_TELEMETRY, MOCK_MAINTENANCE_LOGS } from '@/api/mockData';
 import { networkSentinel } from '@/sync/networkSentinel';
 import { ENV } from '@/config';
+import { driverRealtimeManager, DriverRealtimeListener } from '@/realtime';
 
 export interface DriverDashboardContext {
   trip: ActiveTrip | null;
@@ -47,21 +50,28 @@ export const driverService = {
     if (!activeTrip && networkSentinel.isOnline()) {
       try {
         const assignment = await tripApi.fetchActiveAssignment();
-        if (assignment?.trip) {
+        if (assignment?.trip && assignment.trip.id) {
+          const rawTrip = assignment.trip as any;
+          const tripId = rawTrip.id;
+          const tripNumber =
+            rawTrip.tripNumber ||
+            rawTrip.trip_number ||
+            `TRIP-${tripId.substring(0, 8)}`;
+          const userDisplayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Driver';
           activeTrip = {
-            trip_id: assignment.trip.id,
-            trip_number: assignment.trip.tripNumber,
-            vehicle_plate: assignment.trip.truckPlateNumber,
-            driver_name: assignment.trip.driverName,
-            sales_user_id: assignment.trip.salesUserId,
-            zone_id: assignment.trip.zoneId,
-            status: assignment.trip.status,
-            dispatched_at: assignment.trip.departureTime,
-            truck_id: assignment.trip.truckId,
-            truck_model: assignment.trip.truckModel,
-            driver_id: assignment.trip.driverId,
-            sales_user_name: assignment.trip.salesUserName,
-            zone_name: assignment.trip.zoneName,
+            trip_id: tripId,
+            trip_number: tripNumber,
+            vehicle_plate: rawTrip.truckPlateNumber || rawTrip.truck_plate_number || 'N/A',
+            driver_name: rawTrip.driverName || rawTrip.driver_name || userDisplayName,
+            sales_user_id: rawTrip.salesUserId || rawTrip.sales_user_id || user.id,
+            zone_id: rawTrip.zoneId || rawTrip.zone_id || 'DEFAULT',
+            status: rawTrip.status || 'IN_PROGRESS',
+            dispatched_at: rawTrip.departureTime || rawTrip.departure_time || new Date().toISOString(),
+            truck_id: rawTrip.truckId || rawTrip.truck_id || null,
+            truck_model: rawTrip.truckModel || rawTrip.truck_model || null,
+            driver_id: rawTrip.driverId || rawTrip.driver_id || user.id,
+            sales_user_name: rawTrip.salesUserName || rawTrip.sales_user_name || null,
+            zone_name: rawTrip.zoneName || rawTrip.zone_name || null,
           };
           await tripRepository.saveActiveTrip(activeTrip);
         }
@@ -111,7 +121,7 @@ export const driverService = {
     let shift = await driverRepository.getActiveShift(user.id);
 
     // 4. Fetch pending sync count
-    const pendingSyncCount = await syncQueueRepository.getPendingCount();
+    const pendingSyncCount = await syncQueueRepository.getPendingCount(user.id);
 
     return {
       trip: activeTrip,
@@ -125,7 +135,7 @@ export const driverService = {
    * Clock in (Start Shift)
    */
   async clockIn(user: UserSession, truckId?: string): Promise<DriverShift> {
-    const shiftId = `shift-${Date.now()}`;
+    const shiftId = Crypto.randomUUID();
     const now = new Date().toISOString();
 
     const localTelem = await driverRepository.getVehicleTelemetry();
@@ -148,7 +158,9 @@ export const driverService = {
     if (networkSentinel.isOnline()) {
       try {
         const resp = await driverApi.clockIn(user.id, effectiveTruckId);
-        shift.id = resp.shiftId || shift.id;
+        if (resp.shiftId && resp.shiftId !== shift.id) {
+          shift.id = resp.shiftId;
+        }
         shift.synced = true;
         await driverRepository.saveShift(shift);
         postedDirectly = true;
@@ -159,7 +171,8 @@ export const driverService = {
 
     if (!postedDirectly) {
       await syncQueueRepository.enqueue({
-        id: shiftId,
+        id: shift.id,
+        user_id: user.id,
         operation_type: 'CLOCK_IN',
         endpoint: '/attendance/clock-in',
         payload: JSON.stringify({
@@ -180,7 +193,7 @@ export const driverService = {
    */
   async clockOut(user: UserSession): Promise<DriverShift> {
     const existing = await driverRepository.getActiveShift(user.id);
-    const shiftId = existing?.id || `shift-${Date.now()}`;
+    const shiftId = existing?.id || Crypto.randomUUID();
     const now = new Date().toISOString();
 
     const shift: DriverShift = {
@@ -207,18 +220,24 @@ export const driverService = {
     }
 
     if (!postedDirectly) {
+      const isShiftIdUuid = Boolean(shiftId && UUID_REGEX.test(shiftId));
+      const payload: Record<string, any> = {
+        userId: user.id,
+        driverId: user.id,
+        clockOutTime: now,
+        timestamp: now,
+      };
+      if (isShiftIdUuid) {
+        payload.attendanceId = shiftId;
+        payload.shiftId = shiftId;
+      }
+
       await syncQueueRepository.enqueue({
-        id: `cout-${Date.now()}`,
+        id: Crypto.randomUUID(),
+        user_id: user.id,
         operation_type: 'CLOCK_OUT',
         endpoint: '/attendance/clock-out',
-        payload: JSON.stringify({
-          attendanceId: shiftId,
-          shiftId,
-          userId: user.id,
-          driverId: user.id,
-          clockOutTime: now,
-          timestamp: now,
-        }),
+        payload: JSON.stringify(payload),
       });
     }
 
@@ -276,6 +295,7 @@ export const driverService = {
 
     await syncQueueRepository.enqueue({
       id: alertId,
+      user_id: user.id,
       operation_type: 'EMERGENCY_SOS',
       endpoint: '/operations/alerts',
       payload: JSON.stringify({
@@ -390,6 +410,7 @@ export const driverService = {
     if (!postedDirectly) {
       await syncQueueRepository.enqueue({
         id: logId,
+        user_id: user.id,
         operation_type: 'LOG_FUEL',
         endpoint: '/operations/fuel',
         payload: JSON.stringify(payload),
@@ -501,6 +522,7 @@ export const driverService = {
     if (!postedDirectly) {
       await syncQueueRepository.enqueue({
         id: reportId,
+        user_id: user.id,
         operation_type: 'REPORT_APPREHENSION',
         endpoint: '/operations/apprehensions',
         payload: JSON.stringify(payload),
@@ -599,6 +621,7 @@ export const driverService = {
     if (!postedDirectly) {
       await syncQueueRepository.enqueue({
         id: issueId,
+        user_id: user.id,
         operation_type: 'REPORT_ISSUE',
         endpoint: '/fleet/maintenance/incidents',
         payload: JSON.stringify(payload),
@@ -694,5 +717,13 @@ export const driverService = {
       fuelLogs: Array.isArray(fuelLogs) ? fuelLogs : [],
       maintenanceLogs: Array.isArray(maintenanceLogs) ? maintenanceLogs : [],
     };
+  },
+
+  /**
+   * Subscribe to live frontline driver real-time socket events.
+   */
+  subscribeRealtime(listener: DriverRealtimeListener): () => void {
+    driverRealtimeManager.init();
+    return driverRealtimeManager.subscribe(listener);
   },
 };

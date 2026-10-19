@@ -147,10 +147,11 @@ export const salesRepository = {
       // 6. Enqueue into sync_queue
       await txn.runAsync(
         `INSERT INTO sync_queue (
-          id, operation_type, endpoint, payload, retry_count, status, created_at
-        ) VALUES (?, ?, ?, ?, 0, 'PENDING', ?);`,
+          id, user_id, operation_type, endpoint, payload, retry_count, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, 0, 'PENDING', ?);`,
         [
           syncQueueItem.id,
+          syncQueueItem.user_id || null,
           syncQueueItem.operation_type,
           syncQueueItem.endpoint,
           syncQueueItem.payload,

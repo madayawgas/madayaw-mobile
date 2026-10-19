@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../../../components/navigation/BottomNav';
 import ProfileBg from '../../../../assets/svg/profile-bg.svg';
 import { driverRepository, resetFullDatabase } from '@/database';
+import { driverService } from '@/services/driverService';
 
 const DRIVER_TABS = [
   { id: 'dashboard', label: 'Cabin', iconName: 'speedometer-outline', activeIconName: 'speedometer' },
@@ -67,12 +68,26 @@ const DriverProfileScreen = ({
 
   useEffect(() => {
     let isMounted = true;
-    driverRepository.getVehicleTelemetry().then((v) => {
-      if (isMounted && v) {
-        setVehicle(v);
+    const loadVehicle = () => {
+      driverRepository.getVehicleTelemetry().then((v) => {
+        if (isMounted && v) {
+          setVehicle(v);
+        }
+      }).catch(() => {});
+    };
+
+    loadVehicle();
+
+    const unsubRealtime = driverService.subscribeRealtime((event) => {
+      if (event === 'VEHICLE_DRIVER_ASSIGNED' || event === 'VEHICLE_STATUS_UPDATED' || event === 'FLEET_VEHICLE_RELEASED') {
+        loadVehicle();
       }
-    }).catch(() => {});
-    return () => { isMounted = false; };
+    });
+
+    return () => {
+      isMounted = false;
+      unsubRealtime();
+    };
   }, []);
 
   const fullName =

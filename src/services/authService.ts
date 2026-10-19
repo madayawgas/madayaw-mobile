@@ -41,7 +41,24 @@ async function deleteSecureItem(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
+export type AuthSessionReason = 'login' | 'logout' | 'revoked';
+export type AuthSessionListener = (session: UserSession | null, reason?: AuthSessionReason) => void;
+
+const listeners = new Set<AuthSessionListener>();
+let isRevoking = false;
+
 export const authService = {
+  /**
+   * Subscribes to authentication session state changes.
+   * Useful for root coordinators (e.g. App.js) to react to login, logout, and revocation events.
+   */
+  subscribe(listener: AuthSessionListener): () => void {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+
   async getStoredToken(): Promise<string | null> {
     return getSecureItem(TOKEN_KEY);
   },
@@ -72,12 +89,42 @@ export const authService = {
 
     await setSecureItem(TOKEN_KEY, token);
     await setSecureItem(USER_KEY, JSON.stringify(session));
+
+    listeners.forEach((listener) => {
+      try {
+        listener(session, 'login');
+      } catch (e) {
+        console.error('[AuthService] Listener error on login:', e);
+      }
+    });
+
     return session;
   },
 
-  async clearSession(): Promise<void> {
+  /**
+   * Clears the current persistent session.
+   * Accepts an optional reason: 'logout' (default) or 'revoked' (when 401 is received from backend).
+   * Revocation calls are debounced to prevent duplicate alerts from concurrent requests.
+   */
+  async clearSession(reason: AuthSessionReason = 'logout'): Promise<void> {
+    if (reason === 'revoked') {
+      if (isRevoking) return;
+      isRevoking = true;
+      setTimeout(() => {
+        isRevoking = false;
+      }, 3000);
+    }
+
     await deleteSecureItem(TOKEN_KEY);
     await deleteSecureItem(USER_KEY);
+
+    listeners.forEach((listener) => {
+      try {
+        listener(null, reason);
+      } catch (e) {
+        console.error('[AuthService] Listener error on clearSession:', e);
+      }
+    });
   },
 
   async isAuthenticated(): Promise<boolean> {
@@ -85,3 +132,4 @@ export const authService = {
     return Boolean(token);
   },
 };
+
