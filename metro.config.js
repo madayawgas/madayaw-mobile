@@ -12,6 +12,11 @@ config.resolver = {
   ...resolver,
   assetExts: resolver.assetExts.filter((ext) => ext !== "svg"),
   sourceExts: [...resolver.sourceExts, "svg"],
+  blockList: [
+    /graphify-out\/.*/,
+    /\.agents\/.*/,
+    /brain\/.*/,
+  ],
 };
 
 module.exports = withNativeWind(config, { input: "./global.css" });

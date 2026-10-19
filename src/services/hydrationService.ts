@@ -1,4 +1,4 @@
-import { tripApi, customerApi, productApi } from '@/api';
+import { tripApi, customerApi } from '@/api';
 import { tripRepository, inventoryRepository, customerRepository, resetShiftDatabase } from '@/database';
 import { ActiveTrip, VehicleInventory } from '@/types';
 
@@ -21,7 +21,11 @@ export const hydrationService = {
     try {
       // 1. Fetch active assignment
       const assignmentData = await tripApi.fetchActiveAssignment();
-      const tripRaw = assignmentData.trip;
+      const tripRaw = assignmentData?.trip;
+
+      if (!tripRaw) {
+        throw new Error('No active delivery trip assigned to this account today. Please contact dispatch.');
+      }
 
       // 2. Fetch loaded stock for this trip
       const stockItems = await tripApi.fetchTripStock(tripRaw.id);

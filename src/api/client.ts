@@ -1,5 +1,6 @@
 import { ENV } from '@/config';
 import { authService } from '@/services/authService';
+import { networkSentinel } from '@/sync/networkSentinel';
 import { ApiResponse } from '@/types';
 
 export class ApiError extends Error {
@@ -29,7 +30,7 @@ export async function apiClient<T>(
   options: RequestOptions = {}
 ): Promise<ApiResponse<T>> {
   const url = `${ENV.API_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
-  const timeoutMs = options.timeoutMs || ENV.API_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs || Math.min(ENV.API_TIMEOUT_MS, 6000);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -50,6 +51,7 @@ export async function apiClient<T>(
 
     const response = await fetch(url, {
       ...options,
+      credentials: options.credentials || 'include',
       headers,
       signal: controller.signal,
     });
@@ -59,10 +61,13 @@ export async function apiClient<T>(
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
-      // Online revocation handler: clear session if revoked on backend
-      if (response.status === 401 || response.status === 403) {
-        console.warn(`[ApiClient] Received ${response.status} from backend. Session invalid.`);
-        await authService.clearSession();
+      // Online revocation handler: clear session ONLY if revoked on backend (401 with active token)
+      if (response.status === 401 && !options.skipAuth) {
+        const storedToken = await authService.getStoredToken();
+        if (storedToken) {
+          console.warn(`[ApiClient] Received 401 with active token. Session revoked on backend.`);
+          await authService.clearSession('revoked');
+        }
       }
 
       throw new ApiError(
@@ -76,14 +81,20 @@ export async function apiClient<T>(
   } catch (error: any) {
     clearTimeout(timeoutId);
 
-    if (error.name === 'AbortError') {
-      throw new ApiError(`Request timeout after ${timeoutMs}ms`, 408);
+    if (
+      error.name === 'AbortError' ||
+      error.message?.includes('canceled') ||
+      error.message?.includes('cancelled')
+    ) {
+      networkSentinel.reportNetworkFailure();
+      throw new ApiError(`Network request timeout or offline (${timeoutMs}ms)`, 408);
     }
 
     if (error instanceof ApiError) {
       throw error;
     }
 
+    networkSentinel.reportNetworkFailure();
     throw new ApiError(error.message || 'Network request failed', 0);
   }
 }

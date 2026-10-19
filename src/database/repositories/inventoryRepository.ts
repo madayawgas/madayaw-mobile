@@ -20,10 +20,10 @@ export const inventoryRepository = {
 
   async seedInventory(items: VehicleInventory[]): Promise<void> {
     const db = await getDatabase();
-    await db.withExclusiveTransactionAsync(async () => {
-      await db.runAsync('DELETE FROM local_vehicle_inventory;');
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync('DELETE FROM local_vehicle_inventory;');
       for (const item of items) {
-        await db.runAsync(
+        await txn.runAsync(
           `INSERT INTO local_vehicle_inventory (
             product_id, sku, product_name, quantity_loaded, quantity_sold, quantity_remaining
           ) VALUES (?, ?, ?, ?, ?, ?);`,

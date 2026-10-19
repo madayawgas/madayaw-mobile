@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CustomerCard from '../../components/sales/CustomerCard';
@@ -11,35 +11,44 @@ import ConfirmOrderScreen from './ConfirmOrderScreen';
 import { fetchCustomers } from '../../services/mockCustomerApi';
 import { fetchProducts } from '../../services/mockProductApi';
 import { createOrder } from '../../services/mockOrderApi';
+import { salesService } from '../../services/salesService';
 
 const CustomerScreen = ({ activeTab, onSelectTab }) => {
   const [customers, setCustomers] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Sub-screen navigation states: 'list' | 'add' | 'details' | 'new_order' | 'confirm'
   const [subStep, setSubStep] = useState('list');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedProductIds, setSelectedProductIds] = useState([]);
 
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const [customerRes, productData] = await Promise.all([
-          fetchCustomers(),
-          fetchProducts(),
-        ]);
-        setCustomers(customerRes.data.customers);
-        setAllProducts(productData);
-      } catch (error) {
-        console.error(error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadInitialData();
+  const loadData = useCallback(async () => {
+    try {
+      const [customerRes, productData] = await Promise.all([
+        fetchCustomers(),
+        fetchProducts(),
+      ]);
+      setCustomers(customerRes.data.customers);
+      setAllProducts(productData);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData();
+  }, [loadData]);
 
   const filteredCustomers = customers.filter((item) =>
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -90,8 +99,38 @@ const CustomerScreen = ({ activeTab, onSelectTab }) => {
     }
   };
 
+  const handleAddCustomer = async (customerData) => {
+    try {
+      const newCust = await salesService.registerOfflineCustomer({
+        businessName: customerData.name,
+        contactPerson: customerData.name,
+        contactNumber: customerData.contactNumber,
+        deliveryAddress: customerData.address,
+        customerType: 'RETAIL',
+      });
+      setCustomers((prev) => [
+        {
+          id: newCust.id,
+          name: newCust.business_name,
+          address: newCust.delivery_address,
+          contactNumber: newCust.contact_number,
+          customerType: newCust.customer_type,
+          canister_debt: 0,
+          isActive: true,
+          createdAt: newCust.created_at,
+        },
+        ...prev,
+      ]);
+      setSubStep('list');
+      Alert.alert('Customer Added', `Customer "${customerData.name}" has been registered.`);
+    } catch (e) {
+      console.warn('Failed to add customer:', e);
+      Alert.alert('Error', 'Could not register customer offline.');
+    }
+  };
+
   if (subStep === 'add') {
-    return <AddCustomerScreen onBack={() => setSubStep('list')} />;
+    return <AddCustomerScreen onBack={() => setSubStep('list')} onSubmit={handleAddCustomer} />;
   }
 
   if (subStep === 'details') {
@@ -160,6 +199,14 @@ const CustomerScreen = ({ activeTab, onSelectTab }) => {
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#0d4761"
+                colors={['#0d4761']}
+              />
+            }
             renderItem={({ item }) => (
               <CustomerCard
                 name={item.name}
