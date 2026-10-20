@@ -40,6 +40,11 @@ export interface LoginResponseData {
   token?: string; // In Dual-Auth, mobile receives token alongside cookie
 }
 
+export interface ChangePasswordRequest {
+  currentPassword?: string;
+  newPassword: string;
+}
+
 // ==========================================
 // TRIP & INVENTORY HYDRATION DTOs
 // ==========================================

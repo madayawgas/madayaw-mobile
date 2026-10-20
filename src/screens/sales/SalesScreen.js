@@ -21,6 +21,7 @@ import ConfirmOrderScreen from './ConfirmOrderScreen';
 import ReceiptScreen from './ReceiptScreen';
 import { salesService } from '../../services/salesService';
 import { tripRepository, customerRepository } from '../../database';
+import { useBackHandler } from '../../hooks/useBackHandler';
 
 const SalesScreen = ({ activeTab = 'sales', onSelectTab }) => {
   const [customers, setCustomers] = useState([]);
@@ -47,7 +48,7 @@ const SalesScreen = ({ activeTab = 'sales', onSelectTab }) => {
   const loadTripContext = useCallback(async () => {
     try {
       const [trip, allZones, custZones] = await Promise.all([
-        tripRepository.getActiveTrip(),
+        salesService.resolveActiveTripForUser(),
         salesService.syncZones(),
         customerRepository.getAvailableZones(),
       ]);
@@ -140,8 +141,52 @@ const SalesScreen = ({ activeTab = 'sales', onSelectTab }) => {
     selectedProductIds.includes(p.id)
   );
 
+  // Hardware Back Press Navigation Handler for Sales sub-steps
+  useBackHandler(() => {
+    if (subStep === 'receipt') {
+      handleDoneReceipt();
+      return true;
+    }
+    if (subStep === 'confirm') {
+      setSubStep('new_order');
+      return true;
+    }
+    if (subStep === 'new_order') {
+      setSubStep('details');
+      return true;
+    }
+    if (subStep === 'edit') {
+      setSubStep('details');
+      return true;
+    }
+    if (subStep === 'add') {
+      setSubStep('list');
+      return true;
+    }
+    if (subStep === 'details') {
+      setSubStep('list');
+      return true;
+    }
+    if (subStep === 'list') {
+      if (searchQuery && searchQuery.trim().length > 0) {
+        setSearchQuery('');
+        return true;
+      }
+      return false;
+    }
+    return false;
+  }, activeTab === 'sales' || activeTab === 'customer');
+
   const handleConfirmOrder = async (orderSummaryData) => {
     if (isSubmitting) return;
+
+    if (!activeTrip || activeTrip.status !== 'IN_PROGRESS') {
+      Alert.alert(
+        'No Active Trip',
+        'You cannot complete a transaction without an assigned active delivery trip.'
+      );
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -307,6 +352,13 @@ const SalesScreen = ({ activeTab = 'sales', onSelectTab }) => {
         onBack={() => setSubStep('list')}
         onEdit={() => setSubStep('edit')}
         onAddOrder={() => {
+          if (!activeTrip || activeTrip.status !== 'IN_PROGRESS') {
+            Alert.alert(
+              'No Active Trip',
+              'You cannot make a sale without an assigned active delivery trip. Please check your trip assignment.'
+            );
+            return;
+          }
           setSelectedProductIds([]);
           setOrderQuantities({});
           setSubStep('new_order');

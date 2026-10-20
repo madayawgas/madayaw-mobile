@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from '../client';
-import { LoginRequest, LoginResponseData } from '@/types';
+import { LoginRequest, LoginResponseData, ChangePasswordRequest } from '@/types';
 
 export const authApi = {
   async login(credentials: LoginRequest): Promise<LoginResponseData> {
@@ -9,6 +9,14 @@ export const authApi = {
       skipAuth: true,
     });
     return res.data;
+  },
+
+  async changePassword(data: ChangePasswordRequest): Promise<{ message: string }> {
+    const res = await apiClient<{ message: string }>('/users/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return res.data || { message: res.message || 'Password changed successfully' };
   },
 
   /**

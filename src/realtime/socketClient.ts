@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { Platform } from 'react-native';
 import { ENV } from '@/config';
 import { authService } from '@/services/authService';
 import { networkSentinel } from '@/sync/networkSentinel';
@@ -103,7 +104,11 @@ class SocketClient {
 
     try {
       this.socket = io(socketUrl, {
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'],
+        extraHeaders: {
+          Authorization: `Bearer ${token}`,
+          ...(Platform.OS !== 'web' ? { Origin: 'https://madayawgas.vercel.app' } : {}),
+        },
         auth: {
           token,
         },

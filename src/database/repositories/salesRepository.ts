@@ -169,13 +169,27 @@ export const salesRepository = {
     });
   },
 
-  async getRecentOrders(limit: number = 20): Promise<SalesOrder[]> {
+  async getRecentOrders(limit: number = 20, tripId?: string): Promise<SalesOrder[]> {
+    if (!tripId) {
+      return [];
+    }
     const db = await getDatabase();
     return db.getAllAsync<SalesOrder>(
       `SELECT * FROM local_sales_orders
+       WHERE trip_id = ?
        ORDER BY transacted_at DESC
        LIMIT ?;`,
-      [limit]
+      [tripId, limit]
+    );
+  },
+
+  async getOrdersByCustomerId(customerId: string): Promise<SalesOrder[]> {
+    const db = await getDatabase();
+    return db.getAllAsync<SalesOrder>(
+      `SELECT * FROM local_sales_orders
+       WHERE customer_id = ?
+       ORDER BY transacted_at DESC;`,
+      [customerId]
     );
   },
 
@@ -195,10 +209,14 @@ export const salesRepository = {
     return { order, items };
   },
 
-  async getTotalSalesAmount(): Promise<number> {
+  async getTotalSalesAmount(tripId?: string): Promise<number> {
+    if (!tripId) {
+      return 0;
+    }
     const db = await getDatabase();
     const row = await db.getFirstAsync<{ total: number }>(
-      'SELECT COALESCE(SUM(total_amount), 0) AS total FROM local_sales_orders;'
+      'SELECT COALESCE(SUM(total_amount), 0) AS total FROM local_sales_orders WHERE trip_id = ?;',
+      [tripId]
     );
     return row?.total || 0;
   },

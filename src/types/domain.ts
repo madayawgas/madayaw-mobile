@@ -152,6 +152,7 @@ export interface UserSession {
   permissions: string[];
   token: string;
   savedAt: string;
+  mustChangePassword?: boolean;
 }
 
 // ==========================================

@@ -1,5 +1,5 @@
 import { ENV } from '@/config';
-import { authService } from '@/services/authService';
+import { sessionStore } from '@/services/sessionStore';
 import { networkSentinel } from '@/sync/networkSentinel';
 import { ApiResponse } from '@/types';
 
@@ -43,7 +43,7 @@ export async function apiClient<T>(
     };
 
     if (!options.skipAuth) {
-      const token = await authService.getStoredToken();
+      const token = await sessionStore.getStoredToken();
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
@@ -63,10 +63,10 @@ export async function apiClient<T>(
     if (!response.ok) {
       // Online revocation handler: clear session ONLY if revoked on backend (401 with active token)
       if (response.status === 401 && !options.skipAuth) {
-        const storedToken = await authService.getStoredToken();
+        const storedToken = await sessionStore.getStoredToken();
         if (storedToken) {
           console.warn(`[ApiClient] Received 401 with active token. Session revoked on backend.`);
-          await authService.clearSession('revoked');
+          await sessionStore.clearSession('revoked');
         }
       }
 

@@ -9,6 +9,7 @@ import { customerRepository } from '../../database';
 import { networkSentinel } from '../../sync/networkSentinel';
 
 const CustomerDetailsScreen = ({ customer, activeTrip, onBack, onEdit, onAddOrder }) => {
+  const isTripActive = Boolean(activeTrip && activeTrip.status === 'IN_PROGRESS');
   const [localCustomer, setLocalCustomer] = useState(customer);
   const [localBalances, setLocalBalances] = useState([]);
   const [enrichedData, setEnrichedData] = useState(null);
@@ -363,7 +364,12 @@ const CustomerDetailsScreen = ({ customer, activeTrip, onBack, onEdit, onAddOrde
           </ScrollView>
 
           {/* Action Button */}
-          <PrimaryButton title="ADD ORDER" onPress={onAddOrder} />
+          <PrimaryButton
+            title={isTripActive ? "ADD ORDER" : "NO ACTIVE TRIP ASSIGNED"}
+            onPress={onAddOrder}
+            bgColor={isTripActive ? "bg-[#facc15]" : "bg-gray-200"}
+            textColor={isTripActive ? "text-[#0d4761]" : "text-gray-400"}
+          />
         </View>
       </FadeInView>
     </SafeAreaView>

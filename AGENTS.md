@@ -2,12 +2,12 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
 
 ---
 
-## 🚨 MANDATORY AGENT DIRECTIVES
+## ðŸš¨ MANDATORY AGENT DIRECTIVES
 
 1. **REFER TO THIS FILE FIRST**: Always review `AGENTS.md` before starting any coding, refactoring, or architectural task in this repository.
 2. **MAINTAIN THIS FILE ON EVERY CHANGE**: Whenever you add, modify, or remove database tables, domain services, sync logic, environment variables, dependencies, or architectural patterns, you **MUST update `AGENTS.md`** before completing your task so it always reflects the live state of the codebase.
 3. **PRESERVE EXISTING UI SCREENS**: DO NOT alter or modify `App.js` or files in `src/screens/` unless the user explicitly requests UI screen development or modifications. Keep the existing UI pristine while building or modifying the underlying services.
-4. **NO TYPESCRIPT SYNTAX IN `.js` FILES**: Standard `.js` files are parsed with Babel's Flow/JS parser. Never introduce TypeScript annotations (e.g. `catch (e: any)` or type annotations) into `.js` files — use plain JavaScript.
+4. **NO TYPESCRIPT SYNTAX IN `.js` FILES**: Standard `.js` files are parsed with Babel's Flow/JS parser. Never introduce TypeScript annotations (e.g. `catch (e: any)` or type annotations) into `.js` files â€” use plain JavaScript.
 5. **KNOWLEDGE GRAPH SYNCHRONIZATION**: After modifying code files in any session, run `graphify update .` to keep the graphify knowledge graph in `graphify-out/` current.
 6. **VERIFICATION**: Always run `npx tsc --noEmit` to verify type checking before declaring any task done.
 
@@ -26,7 +26,7 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
   2. `11kg LPG Cylinders`
   3. `50kg LPG Cylinders`
 * **Cellular Dead Zones & Disconnected Operations**:
-  Delivery routes traverse rural areas with zero cellular reception for hours. The app must operate fully offline for an 8–10 hour shift without blocking sales, customer onboarding, canister swaps, or receipt generation.
+  Delivery routes traverse rural areas with zero cellular reception for hours. The app must operate fully offline for an 8â€“10 hour shift without blocking sales, customer onboarding, canister swaps, or receipt generation.
 
 ---
 
@@ -105,7 +105,8 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
     - Successfully ingested entities (`syncedTransactionIds`, `syncedCustomerIds`, including idempotently acknowledged ignored duplicates) are marked `SYNCED` in `sync_queue`, `local_sales_orders`, and `local_customers`.
     - Unrecoverable failed transactions (`INVALID_TRANSACTION_HEADER`, `INVALID_CUSTOMER_ID`, `INVALID_ITEM_PAYLOAD`, `INVALID_INVOICE_PAYLOAD`, `CANISTER_LEDGER_ERROR`, `DUPLICATE_ORDER_CONFLICT`) are quarantined (`status = 'QUARANTINED'`), recording `error_code` and `error_message`. Quarantined items are strictly excluded from subsequent automatic sweeps, permanently eliminating Head-of-Line blocking.
     - Transient database errors (`DB_CONSTRAINT_ERROR`) increment `retry_count` up to 3 before transitioning to quarantine.
-- **Session & Invalidation Invariants (`apiClient.ts`, `authService.ts`, `App.js`)**:
+- **Session & Invalidation Invariants (`sessionStore.ts`, `apiClient.ts`, `authService.ts`, `App.js`)**:
+  - **Acyclic Session Architecture**: Token and persistent session storage are decoupled into `sessionStore.ts` (Level 0, zero internal dependencies). Low-level `apiClient.ts` reads the active Bearer token and triggers 401 revocation via `sessionStore`, while high-level `authService.ts` coordinates authentication workflows with `authApi.ts` and delegates storage to `sessionStore`. This strictly eliminates Metro require cycles (`sessionStore` <- `client` <- `authApi` <- `authService`).
   - `apiClient` preserves authenticated sessions on `403 Forbidden` (permission denied on specific resources). Sessions are only cleared on genuine `401 Unauthorized` responses where an active token was provided, passing reason `'revoked'`.
   - **Reactive Session Subscription (`authService.ts`)**: `authService.subscribe((session, reason) => void)` emits session state changes across the application. When backend revokes a session (401), `authService.clearSession('revoked')` debounces concurrent requests with a 3-second guard to prevent alert spamming and broadcasts to subscribers.
   - **Auto-Logout & UI Synchronization (`App.js`)**: `App.js` listens to `authService.subscribe`, immediately clearing active `user`, resetting `currentTab`, halting `syncScheduler`, and displaying a clean `Alert.alert('Session Expired', ...)` prompt.
@@ -114,6 +115,10 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
     - If revoked (401): session is purged, auto-login halts, and the user remains on `LoginScreen` with the session expired prompt.
     - If offline / timeout (408 or 0): user is allowed to proceed offline with cached session, upholding the critical offline-first DSD operational requirement.
   - Timeout defaults to 6s with clean `408 Timeout/Offline` classification and automated failover notification to `networkSentinel`.
+  - **Universal First-Login Password Change Flow (`ChangePasswordScreen.js`, `authApi.ts`, `authService.ts`, `App.js`)**:
+    - **Role-Agnostic Interception Invariant**: When an admin creates an account or resets credentials, the user is issued a temporary password with `mustChangePassword: true`. In `App.js`, this flag intercepts the screen lifecycle at the root level before any role evaluation (`isDriver`) or screen dispatch (`renderActiveScreen()`). Neither Drivers nor Sales Agents can view dashboards, hydrations, or tabs until the password is changed.
+    - **Sync Suppression Invariant**: Background operational sync (`syncScheduler.setActiveUser`) is withheld while `mustChangePassword === true`, preventing backend `403 MUST_CHANGE_PASSWORD` errors.
+    - **Session Revocation & Clean Re-login**: The user provides a new password (min. 8 characters with confirmation match), which is dispatched to `POST /api/users/change-password`. On backend success (where `must_change_password` is updated to `false` and all active sessions are revoked), the app displays a success prompt, clears local SecureStore sessions (`authService.clearSession('logout')`), and routes the operator back to `LoginScreen` to sign in cleanly with their newly established credentials.
 - **Dynamic Truck & Driver Context Hydration (`driverService.ts`)**:
   - Resolves active trip assignments via `GET /api/trips/active-assignment` and vehicle telemetry via `GET /api/fleet/my-vehicle`, caching to `local_active_trip` and `local_vehicle_telemetry`.
   - **Authoritative Trip Synchronization & Constraint Integrity**: When a driver or salesperson has no assigned active trip, backend returns `{ data: { trip: null } }`. When online, `driverService.getDashboardContext` authoritatively synchronizes this state and clears stale `local_active_trip` rows, preventing ghost trips and relational foreign key errors. If a cached trip belongs to a different driver, it is purged. When active trips exist, robust multi-layer property fallbacks (`tripNumber ?? trip_number ?? TRIP-<id>`) guarantee constraint compliance.
@@ -127,7 +132,7 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
   - **Zero Mock Policy**: 100% of mock fixtures, dummy generators, and mock flags (`USE_MOCK`, `EXPO_PUBLIC_USE_MOCK`) are purged. All operations strictly source from live local SQLite or backend endpoints.
 - **Frontline Real-Time WebSocket Engine (`src/realtime/`)**:
   - **Socket.IO v4.8.x Architecture (`socketClient.ts`)**:
-    - Connects to backend Socket.IO server via `['websocket', 'polling']` transports with session Bearer token in handshake `auth`.
+    - Connects to backend Socket.IO server via `['polling', 'websocket']` transports with session Bearer token in handshake `auth`, `Authorization` header, and fallback whitelisted origin on native platforms to ensure seamless connectivity across development tunnels (`npx expo start --tunnel`), firewalls, and production deployments.
     - Reactive lifecycle bound to `authService.subscribe` (connects on login, disconnects on logout) and `networkSentinel` (disconnects when entering cellular dead zones, reconnects on `networkSentinel.onOnlineTransition()`).
     - Standardized application envelope `{ event, data, meta }` with safe parsing.
     - Central listener for `AUTH_SESSION_REVOKED`: immediately terminates socket connection, invokes `authService.clearSession('revoked')`, and routes back to login.
@@ -137,14 +142,22 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
     - **Emergency SOS Supervisor Triage**: Handles `EMERGENCY_ALERT_STATUS_UPDATED`, immediately notifying frontline drivers via alerts/prompts when supervisors acknowledge or resolve their emergency alerts.
     - **Additive Write Independence**: Sockets are strictly additive observers. All field mutations (orders, SOS alerts, shifts) persist atomically to local SQLite and `sync_queue` regardless of socket connection state.
 - **Sales Person Dashboard Context & Invariants (`salesService.ts`, `DashboardScreen.js`)**:
-  - **Authoritative Trip & Dispatched Vehicle Inventory Synchronization (`salesService.ts`, `inventoryRepository.ts`, `DashboardScreen.js`)**:
-    - Dispatched trip stock is authoritatively synchronized via `tripApi.fetchTripStock(activeTrip.trip_id)` and ingested via `inventoryRepository.syncTripInventory(tripId, stockItems)`.
-    - **Offline Sales Preservation**: During sync, `syncTripInventory` queries `local_sales_items` for the active `trip_id`, ensuring in-flight offline sales made in the field correctly deduct from loaded inventory: `quantity_remaining = max(0, quantity_loaded - quantity_sold)`.
-    - When no active trip exists, `local_vehicle_inventory` is cleared via `inventoryRepository.clearInventory()`.
-    - Real-time reactivity: `DashboardScreen.js` subscribes to `driverRealtimeManager` on mount, immediately reloading when `TRIP_DISPATCHED`, `TRIP_LOAD_RECORDED`, or `VEHICLE_STOCK_UPDATED` events fire without requiring a manual pull-to-refresh.
-  - **Vehicle Fleet Terminology Standardization**:
-    - User-facing references across the application use "Vehicle" instead of "Truck" (e.g., "Vehicle Inventory on Board", "Vehicle Plate & Model") to accurately reflect MadayawGas's diverse fleet.
-  - **Shift Metrics & Discrete Integer Stock**: Aggregates shift gross sales via `salesRepository.getTotalSalesAmount()`, tracks loaded vehicle stock counters (`local_vehicle_inventory`) for the 3 canonical SKUs (170g Butane, 11kg LPG, 50kg LPG), and renders the latest 5 transactions with color-coded sync status badges (`SYNCED`, `PENDING`, `QUARANTINED`/`FAILED`).
+  - **Authoritative Sales User Trip Binding & Auto-Purging (`salesService.resolveActiveTripForUser`)**:
+    - Validates trip details from backend (`GET /api/trips/active-assignment` when online) or SQLite cache (`local_active_trip` when offline).
+    - **Strict User Binding Invariant**: Verifies that the authenticated sales person is strictly bound to the trip (`trip.sales_user_id === userId`) and status is active (`status === 'IN_PROGRESS'`).
+    - **Multi-User Isolation on Shared Devices**: If a cached or returned trip belongs to another sales person or driver, or if the user has no active trip assigned, `local_active_trip` and `local_vehicle_inventory` are automatically purged immediately, returning `null`. Newly created sales persons or unassigned operators never inherit another operator's inventory or shift metrics.
+    - If bound, saves to SQLite and authoritatively ingests stock manifest via `inventoryRepository.syncTripInventory(tripId, stockItems)`.
+  - **Trip-Scoped Transactions & Shift Metrics (`salesRepository.ts`, `salesService.ts`)**:
+    - Shift gross sales counters (`salesRepository.getTotalSalesAmount(tripId)`) and recent transactions (`salesRepository.getRecentOrders(5, tripId)`) are strictly scoped to the active `trip_id`.
+    - When no active trip is bound, total sales is strictly `â‚± 0.00`, recent transactions is empty (`[]`), and vehicle inventory on board is empty (`[]`).
+  - **Active Trip Requirement for Field Sales**:
+    - Sales agents cannot initiate, browse catalog, or record orders without an active delivery trip.
+    - `salesService.processSale` and `salesService.createOrder` throw an explicit error if `!activeTrip || activeTrip.status !== 'IN_PROGRESS'`.
+    - `salesService.getProductCatalog` returns an empty array (`[]`) without an active trip manifest.
+    - UI triggers ("New Order" on `DashboardScreen.js` and "ADD ORDER" on `CustomerDetailsScreen.js`) are disabled and visually indicated as inactive when no trip is active.
+  - **Offline Sales Preservation**: During sync, `syncTripInventory` queries `local_sales_items` for the active `trip_id`, ensuring in-flight offline sales made in the field correctly deduct from loaded inventory: `quantity_remaining = max(0, quantity_loaded - quantity_sold)`.
+  - **Real-time reactivity**: `DashboardScreen.js` subscribes to `driverRealtimeManager` on mount, immediately reloading when `TRIP_DISPATCHED`, `TRIP_LOAD_RECORDED`, or `VEHICLE_STOCK_UPDATED` events fire without requiring a manual pull-to-refresh.
+  - **Vehicle Fleet Terminology Standardization**: User-facing references across the application use "Vehicle" instead of "Truck" (e.g., "Vehicle Inventory on Board", "Vehicle Plate & Model") to accurately reflect MadayawGas's diverse fleet.
   - **Reactive Badge & Connectivity**: Subscribes to `syncScheduler` to reflect live online/offline state and pending queue mutation counts.
 - **Customer Catalog & Zone Filter Controls (`CustomerScreen.js`, `customerRepository.ts`, `zoneRepository.ts`, `salesService.ts`)**:
   - **All Zones by Default**: The catalog displays all zones by default (`selectedZoneFilter = 'ALL'`) rather than auto-locking to the active delivery route.
@@ -188,12 +201,24 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
     - Includes one-tap "Done / Back to Sales" navigation reset and native text receipt sharing (`Share.share`).
 - **Manual Pull-to-Refresh Fallback**:
   - `RefreshControl` is implemented on operational screens (`DriverDashboardScreen.jsx`, `DriverMaintenanceScreen.jsx`, `SalesScreen.js`, `DashboardScreen.js`) to allow field operators to manually refetch authoritative state and trigger sync upload if real-time sockets or network connectivity experienced temporary latency. Profile screens are intentionally excluded.
+- **Hierarchical Android System Back Button Navigation Architecture (`src/hooks/useBackHandler.ts`, `App.js`, `SalesScreen.js`, `ConfirmOrderScreen.js`, `OrderSummaryDrawer.js`, `AddCustomerScreen.js`, `ChangePasswordScreen.js`)**:
+  - **Custom Architecture Adaptation**: Because the app uses a custom React state-based navigation architecture rather than third-party navigators (React Navigation / Expo Router), hardware back button presses on Android are coordinated hierarchically through a custom `useBackHandler` hook preserving React Native's LIFO event stack.
+  - **Root Double-Tap Exit Debounce (`App.js`)**: When an authenticated user is on the main `dashboard` tab and presses the Android hardware Back button, an Android toast (`"Press back again to exit"`) is displayed. Pressing Back again within 2,000ms exits the application (`BackHandler.exitApp()`) cleanly. Single back presses never terminate the session, trigger logouts, or abandon active shift telemetry.
+  - **Tab History Stack Navigation (`App.js`)**: Secondary tab navigation (`sales`, `customer`, `profile`, `maintenance`) records a visited tab stack (`tabHistory`). Pressing Back on any secondary tab pops backwards through visited tabs until reaching the default `dashboard` tab, where exit debouncing activates. Explicitly tapping `dashboard` clears the tab history.
+  - **Workflow Sub-Screen Reversals (`SalesScreen.js`, `ConfirmOrderScreen.js`)**: Pressing Back inside field sales reverses the active workflow: `receipt` returns to customer `list` (clearing completed order context), `confirm` returns to `new_order` (preserving selected products and custom line item quantities), `new_order` returns to `details`, `edit` returns to `details`, and `details` returns to `list`. When at `list`, if a `searchQuery` is active, Back clears the search; if empty, it propagates to `App.js` to pop the tab.
+  - **Leaf Drawer & Modal Dismissal (`OrderSummaryDrawer.js`, `<Modal onRequestClose>`)**: When the PanResponder-based `OrderSummaryDrawer` is expanded, Back collapses it to peek (`PEEK_OFFSET`) without exiting the screen. Native `<Modal>` dialogs across both driver operations and sales implement `onRequestClose` to dismiss cleanly on hardware Back press.
+  - **Unsaved Form Protection (`AddCustomerScreen.js`)**: Dirty state tracking checks for unsaved form input in both new registration and edit modes. Back presses (hardware button or header chevron) trigger an alert confirmation dialog (`"Discard Changes?"`) before navigation occurs, protecting frontline operators from accidental data loss.
+  - **Mandatory Password Reset Guard (`ChangePasswordScreen.js`)**: Intercepts Back presses to show an explicit confirmation prompt (`"Log Out?"`), preventing operators from getting stuck or bypassing the mandatory password change.
 
 ---
 
 ## Configuration & Live Environment (`.env` / `src/config/`)
 
 - Environment variables are statically inlined via `process.env.EXPO_PUBLIC_*` in `src/config/env.ts`.
+- **EAS Build Cloud Environment Configuration (`eas.json`)**:
+  - Remote cloud builds (`preview` APK and `production` AAB) execute in isolated containers where local `.env` is omitted by `.gitignore`.
+  - Build profiles in `eas.json` define the authoritative build-time `env` block (`EXPO_PUBLIC_API_URL: https://madayawgas-api.onrender.com/api`, `EXPO_PUBLIC_API_TIMEOUT_MS`, `EXPO_PUBLIC_SYNC_INTERVAL_MS`, `EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_DEFAULT_ZONE_ID`).
+  - `src/config/env.ts` enforces a safe remote fallback to `https://madayawgas-api.onrender.com/api` instead of `localhost:5000`, preventing physical device `ConnectException` loopback failures if env variables are omitted.
 - **Zero Mock Data Policy**: 100% of legacy mock files (`mockApi.js`, `mockCustomerApi.js`, `mockOrderApi.js`, `mockProductApi.js`) have been permanently deleted. All authentication, customer catalog, order creation, and inventory operations strictly source from authoritative live endpoints or local SQLite tables.
 - **Default Authentication Credentials**:
   - `sales_user` / `SalesPass123!` (Canonical backend sales agent)
@@ -202,19 +227,19 @@ This is an Expo/React Native mobile application for MadayawGas Direct Store Deli
 - Handled directly in `src/services/authService.ts` (`authService.login`) connecting `LoginScreen.js` to `src/api/endpoints/authApi.ts`.
 - **Remote Product Catalog Integration & Vehicle Manifest Filtering (`salesService.getProductCatalog`, `src/api/endpoints/productApi.ts`)**:
   - When online, queries `GET /api/inventory/products` under the sales agent's Bearer token (authorized via `['inventory.view', 'sales.view', 'sales.view_own', 'sales.create']`).
-  - Safely maps remote product catalog items with canonical standard SKU pricing (`Butane Canister`: ₱100, `11kg LPG Cylinder`: ₱1,000, `50kg LPG Cylinder`: ₱4,200) and net weights.
+  - Safely maps remote product catalog items with canonical standard SKU pricing (`Butane Canister`: â‚±100, `11kg LPG Cylinder`: â‚±1,000, `50kg LPG Cylinder`: â‚±4,200) and net weights.
   - Strictly filters remote catalog items by matching against the loaded active trip vehicle inventory (`local_vehicle_inventory`). In-plant products not loaded onto the truck are completely excluded from the product catalog in both online and offline modes.
   - Transparently falls back to loaded vehicle inventory in local SQLite (`local_vehicle_inventory`) when offline or disconnected.
 
 ---
 
-## Expo has changed — do not trust your training data
+## Expo has changed â€” do not trust your training data
 
 Expo ships breaking changes every SDK release. APIs you remember are likely renamed, moved, or removed. Before writing any code that touches an Expo, EAS, or React Native API:
 
 1. Read the major version of the `expo` package in `package.json`.
 2. Fetch the matching versioned docs: `https://docs.expo.dev/versions/v<major>.0.0/`
-3. For anything else, fetch https://docs.expo.dev/llms.txt — an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
+3. For anything else, fetch https://docs.expo.dev/llms.txt â€” an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
 
 ---
 
@@ -223,7 +248,7 @@ Expo ships breaking changes every SDK release. APIs you remember are likely rena
 Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
 
 ```bash
-npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
+npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add â€” resolves SDK-compatible versions
 npx expo start              # start the dev server
 npx expo lint               # lint
 npx tsc --noEmit            # typecheck
@@ -260,13 +285,13 @@ Run lint and typecheck before declaring any task done.
 
 ## Building with EAS
 
-Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
+Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) â€” no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
 Docs: https://docs.expo.dev/eas/index.md
 
 ---
 
 ## Native Code & Build Rules
 
-- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
+- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand â€” configure native behavior in `app.json` and config plugins.
 - Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md

@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import PrimaryButton from '../ui/PrimaryButton';
 import { mediaService } from '../../services/mediaService';
+import { useBackHandler } from '../../hooks/useBackHandler';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -68,6 +69,14 @@ const OrderSummaryDrawer = ({
       friction: 10,
     }).start();
   };
+
+  useBackHandler(() => {
+    if (isExpanded) {
+      animateToOffset(PEEK_OFFSET);
+      return true;
+    }
+    return false;
+  }, isExpanded);
 
   const panResponder = useRef(
     PanResponder.create({

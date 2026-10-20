@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import QuantityControl from '../../components/sales/QuantityControl';
 import OrderSummaryDrawer from '../../components/sales/OrderSummaryDrawer';
 import FadeInView from '../../components/ui/FadeInView';
+import { useBackHandler } from '../../hooks/useBackHandler';
 
 const ConfirmOrderScreen = ({
   selectedProducts: initialProducts = [],
@@ -107,6 +108,15 @@ const ConfirmOrderScreen = ({
       onBack(quantities, products.map((p) => p.id));
     }
   };
+
+  useBackHandler(() => {
+    if (showAddProductModal) {
+      setShowAddProductModal(false);
+      return true;
+    }
+    handleBack();
+    return true;
+  }, true);
 
   const unselectedProducts = (allProducts || []).filter(
     (ap) => !products.some((p) => p.id === ap.id)

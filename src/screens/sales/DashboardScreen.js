@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../../components/navigation/BottomNav';
 import DashboardDesign from '../../../assets/svg/dashboard-bg.svg';
@@ -202,11 +202,20 @@ const DashboardScreen = ({ user, activeTab, onSelectTab }) => {
               <Text className="text-gray-400 text-[10px] mt-0.5">Real-time local recorded gross sales</Text>
             </View>
             <TouchableOpacity
-              onPress={() => onSelectTab && onSelectTab('sales')}
-              activeOpacity={0.8}
-              className="bg-[#facc15] px-4 py-2.5 rounded-full shadow-sm"
+              onPress={() => {
+                if (!isTripActive) {
+                  Alert.alert(
+                    'No Active Trip',
+                    'You cannot make a sale without an assigned active delivery trip. Please check your trip assignment.'
+                  );
+                  return;
+                }
+                onSelectTab && onSelectTab('sales');
+              }}
+              activeOpacity={isTripActive ? 0.8 : 0.5}
+              className={`${isTripActive ? 'bg-[#facc15]' : 'bg-gray-200'} px-4 py-2.5 rounded-full shadow-sm`}
             >
-              <Text className="text-[#0d4761] text-xs font-bold uppercase tracking-wider">New Order</Text>
+              <Text className={`${isTripActive ? 'text-[#0d4761]' : 'text-gray-400'} text-xs font-bold uppercase tracking-wider`}>New Order</Text>
             </TouchableOpacity>
           </View>
 

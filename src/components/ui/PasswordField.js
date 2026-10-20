@@ -14,6 +14,8 @@ const PasswordField = ({ label, placeholder, value, onChangeText }) => {
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={isSecure}
+          autoCapitalize="none"
+          autoCorrect={false}
         />
         <TouchableOpacity onPress={() => setIsSecure(!isSecure)}>
           <Ionicons name={isSecure ? "eye-off" : "eye"} size={20} color="#9ca3af" />

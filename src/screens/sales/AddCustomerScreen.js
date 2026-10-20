@@ -7,6 +7,7 @@ import ContactField from '../../components/ui/ContactField';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import FadeInView from '../../components/ui/FadeInView';
 import { zoneRepository } from '../../database';
+import { useBackHandler } from '../../hooks/useBackHandler';
 
 const CUSTOMER_TYPES = [
   { id: 'RETAIL', label: 'Retail' },
@@ -68,6 +69,52 @@ const AddCustomerScreen = ({ activeTrip, initialCustomer, onBack, onSubmit }) =>
 
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const initialContact = extractTenDigits(
+    initialCustomer?.contactNumber || initialCustomer?.contact_number || initialCustomer?.phone
+  );
+  const initialAltContact = extractTenDigits(
+    initialCustomer?.alternateContactNumber || initialCustomer?.alternate_contact_number
+  );
+  const initialContactPerson =
+    initialCustomer?.contact_person || initialCustomer?.contactPerson || initialCustomer?.name || '';
+  const initialBusinessName =
+    initialCustomer?.business_name || initialCustomer?.businessName || '';
+  const initialAddress =
+    initialCustomer?.delivery_address || initialCustomer?.deliveryAddress || initialCustomer?.address || '';
+  const initialTin = initialCustomer?.tin || '';
+
+  const hasUnsavedChanges =
+    contactPerson !== initialContactPerson ||
+    businessName !== initialBusinessName ||
+    contact !== initialContact ||
+    altContact !== initialAltContact ||
+    address !== initialAddress ||
+    tin !== initialTin;
+
+  const handleBackPress = () => {
+    if (showZonePicker) {
+      setShowZonePicker(false);
+      return;
+    }
+    if (hasUnsavedChanges) {
+      Alert.alert(
+        'Discard Changes?',
+        'You have unsaved changes. Are you sure you want to discard them and go back?',
+        [
+          { text: 'Keep Editing', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: onBack },
+        ]
+      );
+      return;
+    }
+    if (onBack) onBack();
+  };
+
+  useBackHandler(() => {
+    handleBackPress();
+    return true;
+  }, true);
 
   const validate = () => {
     const errs = {};
@@ -151,7 +198,7 @@ const AddCustomerScreen = ({ activeTrip, initialCustomer, onBack, onSubmit }) =>
             {/* Header */}
             <View className="flex-row items-center mb-3">
               <TouchableOpacity
-                onPress={onBack}
+                onPress={handleBackPress}
                 disabled={isSubmitting}
                 activeOpacity={0.7}
                 className="w-12 h-12 bg-white rounded-full items-center justify-center border border-gray-100 shadow-sm mr-4"

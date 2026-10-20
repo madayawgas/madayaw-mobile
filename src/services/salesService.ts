@@ -22,6 +22,7 @@ import {
 import { networkSentinel } from '@/sync/networkSentinel';
 import { syncWorker } from '@/sync/syncWorker';
 import { mediaService } from './mediaService';
+import { authService } from './authService';
 
 export interface SaleItemInput {
   productId: string;
@@ -68,80 +69,168 @@ export interface RegisterCustomerInput {
 }
 
 let activeDashboardPromise: Promise<SalesDashboardData> | null = null;
+let activeDashboardUserId: string | null = null;
 
 export const salesService = {
+    /**
+   * Authoritatively checks and resolves the active trip assigned to the specified sales user:
+   * - Validates trip details from backend (when online) or local SQLite cache (when offline).
+   * - Strict Binding Invariant: Ensures that the user is bound to that trip (trip.sales_user_id === userId).
+   * - If the trip belongs to another sales person / driver, or if no trip is assigned:
+   *   automatically purges stale active trip and stale vehicle inventory in SQLite, returning null.
+   * - If bound to an active trip (status === 'IN_PROGRESS'):
+   *   saves the active trip and synchronizes the vehicle stock manifest to local_vehicle_inventory.
+   */
+  async resolveActiveTripForUser(userId?: string): Promise<ActiveTrip | null> {
+    let effectiveUserId = userId;
+    if (!effectiveUserId) {
+      try {
+        const session = await authService.getSession();
+        effectiveUserId = session?.id;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!effectiveUserId) {
+      // Unauthenticated or unknown operator - purge any stale cabin trip/inventory
+      await tripRepository.clearActiveTrip();
+      await inventoryRepository.clearInventory();
+      return null;
+    }
+
+    let activeTrip: ActiveTrip | null = null;
+
+    if (networkSentinel.isOnline()) {
+      try {
+        const assignment = await tripApi.fetchActiveAssignment();
+        if (assignment?.trip && assignment.trip.id) {
+          const rawTrip = assignment.trip as any;
+          const tripId = rawTrip.id;
+          const tripSalesUserId = rawTrip.salesUserId || rawTrip.sales_user_id;
+          const tripStatus = rawTrip.status || 'IN_PROGRESS';
+
+          // Validate that the trip is actively assigned to this specific sales user
+          if (tripSalesUserId && tripSalesUserId !== effectiveUserId) {
+            console.warn(
+              `[SalesService] Remote trip ${tripId} belongs to sales user "${tripSalesUserId}", not current operator "${effectiveUserId}". Purging cached assignment.`
+            );
+            await tripRepository.clearActiveTrip();
+            await inventoryRepository.clearInventory();
+            return null;
+          }
+
+          if (tripStatus !== 'IN_PROGRESS' && tripStatus !== 'PENDING') {
+            console.log(`[SalesService] Remote trip ${tripId} status is ${tripStatus}. Purging cached assignment.`);
+            await tripRepository.clearActiveTrip();
+            await inventoryRepository.clearInventory();
+            return null;
+          }
+
+          const tripNumber =
+            rawTrip.tripNumber ||
+            rawTrip.trip_number ||
+            `TRIP-${tripId.substring(0, 8)}`;
+
+          activeTrip = {
+            trip_id: tripId,
+            trip_number: tripNumber,
+            vehicle_plate: rawTrip.truckPlateNumber || rawTrip.truck_plate_number || 'N/A',
+            driver_name: rawTrip.driverName || rawTrip.driver_name || 'Driver',
+            sales_user_id: tripSalesUserId || effectiveUserId,
+            zone_id: rawTrip.zoneId || rawTrip.zone_id || 'DEFAULT',
+            status: tripStatus,
+            dispatched_at: rawTrip.departureTime || rawTrip.departure_time || new Date().toISOString(),
+            truck_id: rawTrip.truckId || rawTrip.truck_id || null,
+            truck_model: rawTrip.truckModel || rawTrip.truck_model || null,
+            driver_id: rawTrip.driverId || rawTrip.driver_id || null,
+            sales_user_name: rawTrip.salesUserName || rawTrip.sales_user_name || null,
+            zone_name: rawTrip.zoneName || rawTrip.zone_name || null,
+          };
+          await tripRepository.saveActiveTrip(activeTrip);
+
+          // Authoritatively fetch vehicle stock manifest and sync to local_vehicle_inventory
+          try {
+            const stockItems = await tripApi.fetchTripStock(activeTrip.trip_id);
+            await inventoryRepository.syncTripInventory(activeTrip.trip_id, stockItems);
+          } catch (stockErr) {
+            console.warn('[SalesService] Could not fetch remote trip stock, keeping cached local inventory:', stockErr);
+          }
+        } else {
+          // Server reports no active trip for this user today
+          await tripRepository.clearActiveTrip();
+          await inventoryRepository.clearInventory();
+          activeTrip = null;
+        }
+      } catch (err) {
+        console.warn('[SalesService] Could not fetch remote trip assignment, falling back to local SQLite:', err);
+      }
+    }
+
+    if (!activeTrip) {
+      const cachedTrip = await tripRepository.getActiveTrip();
+      if (cachedTrip) {
+        // Verify cached trip belongs to this sales user and is still active
+        const belongsToUser = cachedTrip.sales_user_id === effectiveUserId;
+        const isActive = cachedTrip.status === 'IN_PROGRESS';
+
+        if (!belongsToUser || !isActive) {
+          console.log(
+            `[SalesService] Cached trip ${cachedTrip.trip_id} does not belong to operator "${effectiveUserId}" (sales_user_id="${cachedTrip.sales_user_id}", status="${cachedTrip.status}"). Purging.`
+          );
+          await tripRepository.clearActiveTrip();
+          await inventoryRepository.clearInventory();
+          activeTrip = null;
+        } else {
+          activeTrip = cachedTrip;
+        }
+      }
+    }
+
+    return activeTrip;
+  },
+
+  /**
+   * Helper alias to resolve active delivery trip for user.
+   */
+  async getActiveTrip(userId?: string): Promise<ActiveTrip | null> {
+    return this.resolveActiveTripForUser(userId);
+  },
+
   /**
    * Retrieves operational dashboard data for the sales agent:
-   * - Authoritative active trip synchronization
-   * - Shift total sales amount
-   * - Latest sales orders
-   * - Vehicle inventory counters (discrete integer units)
-   * - Pending sync items
+   * - Authoritative active trip synchronization scoped to user
+   * - Shift total sales amount scoped strictly to active trip
+   * - Latest sales orders scoped strictly to active trip
+   * - Vehicle inventory counters (discrete integer units) scoped strictly to active trip
+   * - Pending sync items scoped to user
    */
   async getDashboardData(userId?: string): Promise<SalesDashboardData> {
-    if (activeDashboardPromise) {
+    let effectiveUserId = userId;
+    if (!effectiveUserId) {
+      try {
+        const session = await authService.getSession();
+        effectiveUserId = session?.id;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (activeDashboardPromise && activeDashboardUserId === effectiveUserId) {
       return activeDashboardPromise;
     }
 
+    activeDashboardUserId = effectiveUserId || null;
     activeDashboardPromise = (async () => {
       try {
-        let activeTrip: ActiveTrip | null = null;
-
-        if (networkSentinel.isOnline()) {
-          try {
-            const assignment = await tripApi.fetchActiveAssignment();
-            if (assignment?.trip && assignment.trip.id) {
-              const rawTrip = assignment.trip as any;
-              const tripId = rawTrip.id;
-              const tripNumber =
-                rawTrip.tripNumber ||
-                rawTrip.trip_number ||
-                `TRIP-${tripId.substring(0, 8)}`;
-
-              activeTrip = {
-                trip_id: tripId,
-                trip_number: tripNumber,
-                vehicle_plate: rawTrip.truckPlateNumber || rawTrip.truck_plate_number || 'N/A',
-                driver_name: rawTrip.driverName || rawTrip.driver_name || 'Driver',
-                sales_user_id: rawTrip.salesUserId || rawTrip.sales_user_id || userId || 'UNKNOWN',
-                zone_id: rawTrip.zoneId || rawTrip.zone_id || 'DEFAULT',
-                status: rawTrip.status || 'IN_PROGRESS',
-                dispatched_at: rawTrip.departureTime || rawTrip.departure_time || new Date().toISOString(),
-                truck_id: rawTrip.truckId || rawTrip.truck_id || null,
-                truck_model: rawTrip.truckModel || rawTrip.truck_model || null,
-                driver_id: rawTrip.driverId || rawTrip.driver_id || null,
-                sales_user_name: rawTrip.salesUserName || rawTrip.sales_user_name || null,
-                zone_name: rawTrip.zoneName || rawTrip.zone_name || null,
-              };
-              await tripRepository.saveActiveTrip(activeTrip);
-
-              // Authoritatively fetch vehicle stock manifest and sync to local_vehicle_inventory
-              try {
-                const stockItems = await tripApi.fetchTripStock(activeTrip.trip_id);
-                await inventoryRepository.syncTripInventory(activeTrip.trip_id, stockItems);
-              } catch (stockErr) {
-                console.warn('[SalesService] Could not fetch remote trip stock, keeping cached local inventory:', stockErr);
-              }
-            } else {
-              // Server reports no active trip for today
-              await tripRepository.clearActiveTrip();
-              await inventoryRepository.clearInventory();
-              activeTrip = null;
-            }
-          } catch (err) {
-            console.warn('[SalesService] Could not fetch remote trip assignment, falling back to local SQLite:', err);
-          }
-        }
-
-        if (!activeTrip) {
-          activeTrip = await tripRepository.getActiveTrip();
-        }
+        const activeTrip = await this.resolveActiveTripForUser(effectiveUserId);
+        const isTripActive = Boolean(activeTrip && activeTrip.status === 'IN_PROGRESS');
 
         const [totalSales, recentOrders, inventory, queueCount, offlineCustomers] = await Promise.all([
-          salesRepository.getTotalSalesAmount(),
-          salesRepository.getRecentOrders(5),
-          inventoryRepository.getAllInventory(),
-          syncQueueRepository.getPendingCount(userId),
+          isTripActive && activeTrip ? salesRepository.getTotalSalesAmount(activeTrip.trip_id) : Promise.resolve(0),
+          isTripActive && activeTrip ? salesRepository.getRecentOrders(5, activeTrip.trip_id) : Promise.resolve([]),
+          isTripActive ? inventoryRepository.getAllInventory() : Promise.resolve([]),
+          syncQueueRepository.getPendingCount(effectiveUserId),
           customerRepository.getLocallyCreatedCustomers(),
         ]);
 
@@ -155,6 +244,7 @@ export const salesService = {
         };
       } finally {
         activeDashboardPromise = null;
+        activeDashboardUserId = null;
       }
     })();
 
@@ -193,9 +283,10 @@ export const salesService = {
   async processSale(params: ProcessSaleParams): Promise<{ order: SalesOrder; receiptNumber: string; newCustomerDebt: number }> {
     const { customerId, customerName, items, paymentMethod, paymentReference, paymentProofUri } = params;
 
-    const activeTrip = await tripRepository.getActiveTrip();
-    if (!activeTrip) {
-      throw new Error('No active shift found. Please start your shift before recording sales.');
+    const session = await authService.getSession();
+    const activeTrip = await this.resolveActiveTripForUser(session?.id);
+    if (!activeTrip || activeTrip.status !== 'IN_PROGRESS') {
+      throw new Error('No active delivery trip assigned to you. You cannot make a sale without an active delivery trip.');
     }
 
     // Process GCash payment receipt evidence if provided
@@ -304,7 +395,7 @@ export const salesService = {
     const netCustomerDebtDelta = newCustomerDebt - currentCustomerDebt;
 
     // 4. Build Sales Order Object
-    const effectivePaymentRef = persistentProofUri || paymentReference || undefined;
+    const effectivePaymentRef = paymentReference || undefined;
     const salesOrder: SalesOrder = {
       id: orderId,
       transaction_no: transactionNo,
@@ -412,7 +503,7 @@ export const salesService = {
     deliveryAddress: string;
     customerType: 'COMMERCIAL' | 'RETAIL' | 'WHOLESALE';
   }) {
-    const activeTrip = await tripRepository.getActiveTrip();
+    const activeTrip = await this.resolveActiveTripForUser();
     const customerId = Crypto.randomUUID();
     const now = new Date().toISOString();
 
@@ -441,7 +532,7 @@ export const salesService = {
    * - When offline or network error: creates in SQLite with is_locally_created = 1.
    */
   async registerCustomer(customerData: RegisterCustomerInput): Promise<Customer> {
-    const activeTrip = await tripRepository.getActiveTrip();
+    const activeTrip = await this.resolveActiveTripForUser();
     const effectiveZoneId = customerData.zoneId || activeTrip?.zone_id || null;
 
     // Standardize Philippine phone number to E.164 (+63...)
@@ -655,6 +746,12 @@ export const salesService = {
    * Enriches with authoritative remote catalog metadata (prices, weights) when online.
    */
   async getProductCatalog(): Promise<any[]> {
+    const session = await authService.getSession();
+    const activeTrip = await this.resolveActiveTripForUser(session?.id);
+    if (!activeTrip || activeTrip.status !== 'IN_PROGRESS') {
+      return [];
+    }
+
     const localInventory = await inventoryRepository.getAllInventory();
     const loadedMap = new Map<string, VehicleInventory>();
     (localInventory || []).forEach((inv) => {
@@ -781,8 +878,7 @@ export const salesService = {
    * Fetches orders placed by a specific customer.
    */
   async getOrdersByCustomer(customerId: string): Promise<any> {
-    const allOrders = await salesRepository.getRecentOrders(50);
-    const filtered = allOrders.filter((o) => o.customer_id === customerId);
+    const filtered = await salesRepository.getOrdersByCustomerId(customerId);
     return {
       success: true,
       data: filtered.map((o) => ({

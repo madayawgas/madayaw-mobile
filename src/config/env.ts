@@ -12,7 +12,7 @@ const parseNumber = (value: string | undefined, defaultValue: number): number =>
 
 export const ENV = {
   // Backend base URL
-  API_URL: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api',
+  API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://madayawgas-api.onrender.com/api',
 
   // Network request timeout (default: 10 seconds)
   API_TIMEOUT_MS: parseNumber(process.env.EXPO_PUBLIC_API_TIMEOUT_MS, 10000),
