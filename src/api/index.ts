@@ -5,5 +5,5 @@ export * from './endpoints/customerApi';
 export * from './endpoints/productApi';
 export * from './endpoints/syncApi';
 export * from './endpoints/driverApi';
-export * from './mockData';
+export * from './endpoints/scheduleApi';
 

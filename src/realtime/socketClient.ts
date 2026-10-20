@@ -79,13 +79,6 @@ class SocketClient {
    * Connect to backend Socket.IO server with Bearer auth token
    */
   public connect(token: string): void {
-    if (ENV.USE_MOCK) {
-      this.currentToken = token;
-      this.setConnectedState(true);
-      console.log('[SocketClient] Mock mode active: Realtime socket simulation enabled.');
-      return;
-    }
-
     if (!token) {
       console.warn('[SocketClient] Cannot connect without authentication token.');
       return;

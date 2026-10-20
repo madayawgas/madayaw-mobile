@@ -12,6 +12,7 @@ export interface CreateSaleParams {
   canisterEntries: CanisterLedgerEntry[];
   inventoryDeductions: { productId: string; quantitySold: number }[];
   customerDebtChange: number;
+  newCustomerDebt?: number;
   syncQueueItem: Omit<SyncQueueItem, 'retry_count' | 'status' | 'created_at'>;
 }
 
@@ -135,7 +136,14 @@ export const salesRepository = {
       }
 
       // 5. Update Customer Canister Debt Balance
-      if (customerDebtChange !== 0) {
+      if (typeof params.newCustomerDebt === 'number') {
+        await txn.runAsync(
+          `UPDATE local_customers
+           SET canister_debt = ?
+           WHERE id = ?;`,
+          [params.newCustomerDebt, order.customer_id]
+        );
+      } else if (customerDebtChange !== 0) {
         await txn.runAsync(
           `UPDATE local_customers
            SET canister_debt = canister_debt + ?
@@ -199,9 +207,29 @@ export const salesRepository = {
     const db = await getDatabase();
     await db.runAsync(
       `UPDATE local_sales_orders
-       SET sync_status = 'SYNCED', synced_at = ?
+       SET sync_status = 'SYNCED', synced_at = ?, error_code = NULL, error_message = NULL
        WHERE id = ?;`,
       [syncedAt || new Date().toISOString(), orderId]
+    );
+  },
+
+  async markOrderQuarantined(orderId: string, errorCode: string, errorMessage?: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE local_sales_orders
+       SET sync_status = 'QUARANTINED', error_code = ?, error_message = ?
+       WHERE id = ?;`,
+      [errorCode, errorMessage || null, orderId]
+    );
+  },
+
+  async markOrderFailed(orderId: string, errorCode?: string, errorMessage?: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE local_sales_orders
+       SET sync_status = 'FAILED', error_code = ?, error_message = ?
+       WHERE id = ?;`,
+      [errorCode || null, errorMessage || null, orderId]
     );
   },
 };

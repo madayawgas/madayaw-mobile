@@ -139,15 +139,6 @@ export const mediaService = {
    * Uploads binary file to the backend media subsystem (/api/media/upload).
    */
   async uploadMedia(localUri: string, domain: string = 'maintenance/receipts'): Promise<UploadMediaResponse> {
-    if (ENV.USE_MOCK) {
-      // In mock mode, generate a canonical mock storage key
-      const mockStorageKey = `${domain}/${Date.now()}-${Math.random().toString(36).substring(2, 10)}.jpg`;
-      return {
-        storageKey: mockStorageKey,
-        url: `${ENV.API_URL}/media/${mockStorageKey}`,
-      };
-    }
-
     try {
       const token = await authService.getStoredToken();
       const uploadUrl = `${ENV.API_URL}/media/upload`;

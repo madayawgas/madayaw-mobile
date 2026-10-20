@@ -5,8 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import DashboardScreen from './src/screens/sales/DashboardScreen';
-import CustomerScreen from './src/screens/sales/CustomerScreen';
-import OrderScreen from './src/screens/sales/OrderScreen';
+import SalesScreen from './src/screens/sales/SalesScreen';
 import ProfileScreen from './src/screens/shared/ProfileScreen';
 import DriverDashboardScreen from './src/screens/driver/DriverDashboardScreen';
 import DriverMaintenanceScreen from './src/screens/driver/DriverMaintenanceScreen';
@@ -171,11 +170,9 @@ export default function App() {
     }
 
     switch (currentTab) {
-      case 'order':
-        Content = <OrderScreen activeTab={currentTab} onSelectTab={setCurrentTab} />;
-        break;
+      case 'sales':
       case 'customer':
-        Content = <CustomerScreen activeTab={currentTab} onSelectTab={setCurrentTab} />;
+        Content = <SalesScreen activeTab={currentTab} onSelectTab={setCurrentTab} />;
         break;
       case 'profile':
         Content = (

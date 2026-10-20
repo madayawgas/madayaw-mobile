@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS local_sales_orders (
   transacted_at TEXT NOT NULL,
   synced_at TEXT,
   sync_status TEXT NOT NULL DEFAULT 'PENDING',
+  error_code TEXT,
+  error_message TEXT,
   FOREIGN KEY (customer_id) REFERENCES local_customers (id)
 );
 
@@ -103,7 +105,9 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   status TEXT NOT NULL DEFAULT 'PENDING',
   created_at TEXT NOT NULL,
   last_attempted_at TEXT,
-  error_message TEXT
+  error_code TEXT,
+  error_message TEXT,
+  last_error TEXT
 );
 
 -- 8. Monotonic Receipt Sequence Tracking (INV and CD series)
@@ -175,6 +179,25 @@ CREATE TABLE IF NOT EXISTS local_incidents (
   synced INTEGER NOT NULL DEFAULT 0
 );
 
+-- 14. Service Zones Directory
+CREATE TABLE IF NOT EXISTS local_service_zones (
+  id TEXT PRIMARY KEY,
+  code TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1
+);
+
+-- Seed canonical MadayawGas delivery routes for offline instant resolution
+INSERT OR IGNORE INTO local_service_zones (id, code, name, description, is_active) VALUES
+  ('0df0e09d-3cea-4a88-88dc-835bb6d3ad8f', 'BANKEROHAN', 'Bankerohan Hub', 'Bankerohan Public Market and Central Commercial Hub', 1),
+  ('de550109-9a9a-4f28-91b5-943c3efcc584', 'BUHANGIN', 'Buhangin Corridor', 'Buhangin Commercial Corridor and Subdivisions', 1),
+  ('09a5c157-e23c-43a5-be82-91e5773a5c99', 'CALINAN', 'Calinan Zone', 'Calinan Agricultural and Residential Route', 1),
+  ('9b4e4713-8c94-4b70-b08e-3eeaacee514e', 'MATINA', 'Matina Crossing', 'Matina Commercial Crossing and Institutional Area', 1),
+  ('abd4f004-8cd0-43fb-88a3-518aeccf195e', 'PANACAN', 'Panacan Industrial', 'Panacan Industrial and Port District', 1),
+  ('ab33aec7-f998-488e-aff5-3386007753a5', 'TORIL', 'Toril District', 'Toril Commercial, Agricultural and Residential Route', 1),
+  ('7b8f9e6a-5432-41a9-83bc-9d0e12345678', 'DEFAULT', 'Toril Route', 'Primary operational default route', 1);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_customers_search ON local_customers (business_name, contact_person);
 CREATE INDEX IF NOT EXISTS idx_sales_orders_trip ON local_sales_orders (trip_id);
@@ -183,5 +206,6 @@ CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue (status, created_
 CREATE INDEX IF NOT EXISTS idx_sync_queue_user_status ON sync_queue (user_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_fuel_logs_truck ON local_fuel_logs (truck_id, logged_at);
 CREATE INDEX IF NOT EXISTS idx_apprehensions_truck ON local_apprehensions (truck_id, reported_at);
+CREATE INDEX IF NOT EXISTS idx_service_zones_code ON local_service_zones (code);
 `;
 

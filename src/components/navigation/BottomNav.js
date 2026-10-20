@@ -47,8 +47,7 @@ const NavTab = ({ iconName, activeIconName, label, isActive, onPress }) => {
 
 const DEFAULT_TABS = [
   { id: 'dashboard', label: 'Home', iconName: 'server-outline', activeIconName: 'server' },
-  { id: 'order', label: 'Order', iconName: 'cart-outline', activeIconName: 'cart' },
-  { id: 'customer', label: 'Customer', iconName: 'person-outline', activeIconName: 'person' },
+  { id: 'sales', label: 'Sales', iconName: 'cart-outline', activeIconName: 'cart' },
   { id: 'profile', label: 'Profile', iconName: 'person-circle-outline', activeIconName: 'person-circle' },
 ];
 
@@ -61,7 +60,7 @@ const BottomNav = ({ activeTab = 'dashboard', onSelectTab, tabs = DEFAULT_TABS }
           label={tab.label}
           iconName={tab.iconName}
           activeIconName={tab.activeIconName}
-          isActive={activeTab === tab.id}
+          isActive={activeTab === tab.id || (tab.id === 'sales' && activeTab === 'customer')}
           onPress={() => onSelectTab && onSelectTab(tab.id)}
         />
       ))}

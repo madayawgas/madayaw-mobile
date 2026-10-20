@@ -5,7 +5,7 @@ import PasswordField from '../../components/ui/PasswordField';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import LoginDesign from '../../../assets/svg/login-bg.svg';
 import Logo2 from '../../../assets/svg/logo2.svg';
-import { loginUser } from '../../services/mockApi';
+import { authService } from '../../services/authService';
 
 const LoginScreen = ({ onLogin }) => {
   const [username, setUsername] = useState('');
@@ -21,8 +21,8 @@ const LoginScreen = ({ onLogin }) => {
     setLoading(true);
 
     try {
-      const response = await loginUser(username, password);
-      onLogin(response.data);
+      const session = await authService.login({ username, password });
+      onLogin(session);
     } catch (error) {
       Alert.alert("Failed", error.message);
     } finally {

@@ -3,10 +3,6 @@
  * Statically reads EXPO_PUBLIC_* variables for Expo bundle-time inlining.
  */
 
-const parseBoolean = (value: string | undefined, defaultValue: boolean): boolean => {
-  if (value === undefined || value === '') return defaultValue;
-  return value.toLowerCase() === 'true';
-};
 
 const parseNumber = (value: string | undefined, defaultValue: number): number => {
   if (!value) return defaultValue;
@@ -15,9 +11,6 @@ const parseNumber = (value: string | undefined, defaultValue: number): number =>
 };
 
 export const ENV = {
-  // Flag determining whether network calls use mock data or the real backend
-  USE_MOCK: parseBoolean(process.env.EXPO_PUBLIC_USE_MOCK, true),
-
   // Backend base URL
   API_URL: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api',
 
@@ -26,9 +19,6 @@ export const ENV = {
 
   // Sync polling heartbeat interval (default: 30 seconds)
   SYNC_INTERVAL_MS: parseNumber(process.env.EXPO_PUBLIC_SYNC_INTERVAL_MS, 30000),
-
-  // Simulated latency for realistic UI loading states when in mock mode (default: 300ms)
-  SIMULATE_NETWORK_DELAY_MS: parseNumber(process.env.EXPO_PUBLIC_SIMULATE_NETWORK_DELAY_MS, 300),
 
   // Application environment ('development' | 'staging' | 'production')
   APP_ENV: (process.env.EXPO_PUBLIC_APP_ENV || 'development') as 'development' | 'staging' | 'production',

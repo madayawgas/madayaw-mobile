@@ -22,9 +22,7 @@ import {
   ActiveTrip,
 } from '@/types';
 import { mediaService } from './mediaService';
-import { MOCK_VEHICLE_TELEMETRY, MOCK_MAINTENANCE_LOGS } from '@/api/mockData';
 import { networkSentinel } from '@/sync/networkSentinel';
-import { ENV } from '@/config';
 import { driverRealtimeManager, DriverRealtimeListener } from '@/realtime';
 
 export interface DriverDashboardContext {
@@ -45,9 +43,9 @@ export const driverService = {
    * Initializes and retrieves dashboard operational context for the driver.
    */
   async getDashboardContext(user: UserSession): Promise<DriverDashboardContext> {
-    // 1. Check or hydrate active trip
-    let activeTrip = await tripRepository.getActiveTrip();
-    if (!activeTrip && networkSentinel.isOnline()) {
+    // 1. Authoritative active trip synchronization (remote first when online, then local cache fallback)
+    let activeTrip: ActiveTrip | null = null;
+    if (networkSentinel.isOnline()) {
       try {
         const assignment = await tripApi.fetchActiveAssignment();
         if (assignment?.trip && assignment.trip.id) {
@@ -74,9 +72,24 @@ export const driverService = {
             zone_name: rawTrip.zoneName || rawTrip.zone_name || null,
           };
           await tripRepository.saveActiveTrip(activeTrip);
+        } else {
+          // Authoritative server state: Driver has no active delivery trip today.
+          // Clear stale active trip in SQLite to prevent foreign key errors and ghost trips.
+          await tripRepository.clearActiveTrip();
+          activeTrip = null;
         }
       } catch (e) {
         console.warn('[DriverService] Could not fetch remote assignment:', e);
+      }
+    }
+
+    if (!activeTrip) {
+      activeTrip = await tripRepository.getActiveTrip();
+      // Ensure cached trip belongs to this driver; if belonging to another user, purge it
+      if (activeTrip && activeTrip.driver_id && activeTrip.driver_id !== user.id) {
+        console.log('[DriverService] Cached trip belongs to another driver. Purging.');
+        await tripRepository.clearActiveTrip();
+        activeTrip = null;
       }
     }
 
@@ -99,22 +112,18 @@ export const driverService = {
     }
 
     if (!telemetry) {
-      if (ENV.USE_MOCK) {
-        telemetry = MOCK_VEHICLE_TELEMETRY;
-      } else {
-        telemetry = {
-          truck_id: activeTrip?.truck_id || '',
-          plate_number: activeTrip?.vehicle_plate || 'N/A',
-          model: activeTrip?.truck_model || 'Delivery Truck',
-          current_odometer: 0,
-          last_pm_odometer: 0,
-          status: 'ACTIVE',
-          isPmDue: false,
-          distanceSinceLastPm: 0,
-          remainingKmBeforePm: 5000,
-          last_serviced_at: null,
-        };
-      }
+      telemetry = {
+        truck_id: activeTrip?.truck_id || '',
+        plate_number: activeTrip?.vehicle_plate || 'N/A',
+        model: activeTrip?.truck_model || 'Delivery Truck',
+        current_odometer: 0,
+        last_pm_odometer: 0,
+        status: 'ACTIVE',
+        isPmDue: false,
+        distanceSinceLastPm: 0,
+        remainingKmBeforePm: 5000,
+        last_serviced_at: null,
+      };
     }
 
     // 3. Fetch active shift (remote first if online to synchronize duty cycle, then local fallback)
@@ -347,10 +356,17 @@ export const driverService = {
 
     let vehicleId = localTelemetry?.truck_id || activeTrip?.truck_id || '';
 
+    // Only attach candidateTripId if it belongs to this driver
+    const isDriverTrip = !activeTrip?.driver_id || activeTrip.driver_id === user.id;
+    let candidateTripId =
+      isDriverTrip && activeTrip?.trip_id && UUID_REGEX.test(activeTrip.trip_id)
+        ? activeTrip.trip_id
+        : null;
+
     const alertPayload: EmergencyAlertPayload = {
       driverId: user.id,
       vehicleId: UUID_REGEX.test(vehicleId) ? vehicleId : '',
-      tripId: activeTrip?.trip_id && UUID_REGEX.test(activeTrip.trip_id) ? activeTrip.trip_id : null,
+      tripId: candidateTripId,
       emergencyType,
       description,
       location: { latitude, longitude },
@@ -363,6 +379,28 @@ export const driverService = {
       const result = await driverApi.triggerEmergencyAlert(alertPayload);
       return result;
     } catch (e: any) {
+      const errMsg = e?.message || '';
+      if (
+        errMsg.includes('emergency_alerts_trip_id_fkey') ||
+        errMsg.includes('foreign key constraint') ||
+        errMsg.includes('trip_id')
+      ) {
+        console.warn(
+          '[DriverService] Stale trip ID rejected by server foreign key constraint. Retrying SOS without trip ID and clearing stale local trip.'
+        );
+        await tripRepository.clearActiveTrip();
+        candidateTripId = null;
+        try {
+          const fallbackPayload: EmergencyAlertPayload = {
+            ...alertPayload,
+            tripId: null,
+          };
+          const result = await driverApi.triggerEmergencyAlert(fallbackPayload);
+          return result;
+        } catch (retryErr: any) {
+          console.warn('[DriverService] Fallback direct SOS attempt failed:', retryErr.message);
+        }
+      }
       console.warn('[DriverService] Direct SOS attempt failed/offline, queueing for automatic delivery:', e.message);
     }
 
@@ -378,7 +416,7 @@ export const driverService = {
         latitude,
         longitude,
         ...(UUID_REGEX.test(vehicleId) ? { vehicleId } : {}),
-        ...(activeTrip?.trip_id && UUID_REGEX.test(activeTrip.trip_id) ? { tripId: activeTrip.trip_id } : {}),
+        ...(candidateTripId ? { tripId: candidateTripId } : {}),
       }),
     });
 
@@ -509,7 +547,7 @@ export const driverService = {
 
     return {
       fuelLog,
-      telemetry: updatedTelemetry || (ENV.USE_MOCK ? MOCK_VEHICLE_TELEMETRY : fallbackTelem),
+      telemetry: updatedTelemetry || fallbackTelem,
     };
   },
 
@@ -768,10 +806,6 @@ export const driverService = {
       }
     }
 
-    if (maintenanceLogs.length === 0 && ENV.USE_MOCK) {
-      maintenanceLogs = MOCK_MAINTENANCE_LOGS;
-    }
-
     const defaultTelemetry: VehicleTelemetry = {
       truck_id: effectiveTruckId,
       plate_number: activeTrip?.vehicle_plate || 'N/A',
@@ -786,7 +820,7 @@ export const driverService = {
     };
 
     return {
-      telemetry: telemetry || (ENV.USE_MOCK ? MOCK_VEHICLE_TELEMETRY : defaultTelemetry),
+      telemetry: telemetry || defaultTelemetry,
       fuelLogs: Array.isArray(fuelLogs) ? fuelLogs : [],
       maintenanceLogs: Array.isArray(maintenanceLogs) ? maintenanceLogs : [],
     };

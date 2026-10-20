@@ -98,9 +98,3 @@ export async function apiClient<T>(
     throw new ApiError(error.message || 'Network request failed', 0);
   }
 }
-
-/**
- * Helper to simulate network latency in mock mode
- */
-export const delay = (ms: number = ENV.SIMULATE_NETWORK_DELAY_MS): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));

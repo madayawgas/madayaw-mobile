@@ -11,15 +11,21 @@ import { Ionicons } from '@expo/vector-icons';
 import ProductOrderCard from '../../components/sales/ProductOrderCard';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import FadeInView from '../../components/ui/FadeInView';
-import { fetchProducts } from '../../services/mockProductApi';
+import { salesService } from '../../services/salesService';
 
-const NewOrderScreen = ({ onBack, onContinue }) => {
+const NewOrderScreen = ({
+  customer,
+  initialSelectedProductIds = [],
+  initialQuantities = {},
+  onBack,
+  onContinue,
+}) => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedProductIds, setSelectedProductIds] = useState([]);
+  const [selectedProductIds, setSelectedProductIds] = useState(initialSelectedProductIds);
 
   useEffect(() => {
-    fetchProducts().then((data) => {
+    salesService.getProductCatalog().then((data) => {
       setProducts(data);
       setLoading(false);
     });
@@ -34,6 +40,15 @@ const NewOrderScreen = ({ onBack, onContinue }) => {
   };
 
   const selectedCount = selectedProductIds.length;
+  
+  // Extract clean customer identity
+  const customerContactPerson = (customer?.contact_person || customer?.contactPerson || '').trim();
+  const customerBusinessName = (customer?.business_name || customer?.businessName || customer?.store_name || '').trim();
+  const customerName = (customer?.name || '').trim();
+  const customerType = customer?.customer_type || customer?.customerType || 'RETAIL';
+
+  const primaryCustomerTitle = customerContactPerson || customerName || customerBusinessName || 'Customer';
+  const secondaryStoreTitle = customerBusinessName && customerBusinessName !== primaryCustomerTitle ? customerBusinessName : null;
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -54,17 +69,44 @@ const NewOrderScreen = ({ onBack, onContinue }) => {
               />
             </TouchableOpacity>
 
-            <Text className="text-[#0d4761] text-2xl font-bold tracking-tight">
-              New Order
-            </Text>
+            <View className="flex-1">
+              <Text className="text-[#0d4761] text-2xl font-bold tracking-tight">
+                New Order
+              </Text>
+              <Text className="text-gray-400 text-xs">
+                Select products from vehicle inventory
+              </Text>
+            </View>
+          </View>
+
+          {/* Active Customer Identity Banner */}
+          <View className="bg-[#f0f7fa] border border-[#0d4761]/20 rounded-2xl px-4 py-3 mb-3 flex-row items-center justify-between shadow-2xs">
+            <View className="flex-1 mr-2">
+              <View className="flex-row items-center">
+                <Ionicons name="person-circle" size={18} color="#0d4761" className="mr-1.5" />
+                <Text className="text-[#0d4761] font-bold text-sm" numberOfLines={1}>
+                  {primaryCustomerTitle}
+                </Text>
+              </View>
+              {secondaryStoreTitle ? (
+                <Text className="text-gray-500 text-xs font-medium ml-6 mt-0.5" numberOfLines={1}>
+                  Store: {secondaryStoreTitle}
+                </Text>
+              ) : null}
+            </View>
+            <View className="bg-white border border-[#0d4761]/20 px-2.5 py-1 rounded-full shadow-2xs">
+              <Text className="text-[#0d4761] text-[10px] font-bold uppercase tracking-wider">
+                {customerType}
+              </Text>
+            </View>
           </View>
 
           {/* Separator Line */}
-          <View className="border-b border-[#D9D9D9] w-full mb-6" />
+          <View className="border-b border-[#D9D9D9] w-full mb-3" />
 
           {/* Subtitle */}
-          <Text className="text-center text-gray-400 text-xs italic mb-4">
-            Choose your order here
+          <Text className="text-center text-gray-400 text-xs italic mb-3">
+            Tap to select or deselect products
           </Text>
 
           {/* Product Cards Grid */}
@@ -86,6 +128,7 @@ const NewOrderScreen = ({ onBack, onContinue }) => {
                     key={item.id}
                     item={item}
                     isSelected={selectedProductIds.includes(item.id)}
+                    quantity={initialQuantities[item.id] || 0}
                     onPress={() => toggleSelectProduct(item.id)}
                   />
                 ))}

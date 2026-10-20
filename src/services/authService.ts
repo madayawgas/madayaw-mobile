@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { UserSession } from '@/types';
+import { authApi } from '../api/endpoints/authApi';
 
 const TOKEN_KEY = 'mg_session_token';
 const USER_KEY = 'mg_session_user';
@@ -57,6 +58,19 @@ export const authService = {
     return () => {
       listeners.delete(listener);
     };
+  },
+
+  /**
+   * Universal login method for the mobile application.
+   * Authenticates against live authApi and persists session in SecureStore.
+   */
+  async login(credentials: { username: string; password: string }): Promise<UserSession> {
+    const authResult = await authApi.login(credentials);
+    if (!authResult?.user) {
+      throw new Error('Invalid authentication response structure');
+    }
+    const token = authResult.token || `session-${authResult.user.id}`;
+    return this.saveSession(authResult.user, token);
   },
 
   async getStoredToken(): Promise<string | null> {

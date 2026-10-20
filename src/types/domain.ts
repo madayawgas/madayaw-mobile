@@ -72,7 +72,7 @@ export interface Customer {
 
 export type PaymentMethod = 'CASH' | 'GCASH';
 export type PaymentStatus = 'PAID_UNVERIFIED' | 'VERIFIED';
-export type SyncStatus = 'PENDING' | 'SYNCING' | 'SYNCED' | 'FAILED';
+export type SyncStatus = 'PENDING' | 'PROCESSING' | 'SYNCING' | 'SYNCED' | 'FAILED' | 'QUARANTINED';
 
 export interface SalesOrder {
   id: string; // UUID
@@ -87,6 +87,8 @@ export interface SalesOrder {
   transacted_at: string; // Device wall-clock ISO string
   synced_at?: string | null;
   sync_status: SyncStatus;
+  error_code?: string | null;
+  error_message?: string | null;
 }
 
 export interface SalesOrderItem {
@@ -134,7 +136,9 @@ export interface SyncQueueItem {
   status: SyncStatus;
   created_at: string;
   last_attempted_at?: string | null;
+  error_code?: string | null;
   error_message?: string | null;
+  last_error?: string | null;
 }
 
 export interface UserSession {
@@ -244,5 +248,14 @@ export interface MaintenanceServiceLogItem {
   odometerAtService: number;
   completedAt: string;
   cost?: number;
+}
+
+export interface ServiceZone {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  isActive?: boolean;
 }
 
