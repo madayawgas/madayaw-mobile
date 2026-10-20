@@ -1,15 +1,8 @@
-import { apiClient, delay } from '../client';
-import { ENV } from '@/config';
+import { apiClient } from '../client';
 import { ActiveAssignmentResponseData, TripStockItem } from '@/types';
-import { MOCK_ACTIVE_TRIP, MOCK_INITIAL_TRIP_STOCK } from '../mockData';
 
 export const tripApi = {
   async fetchActiveAssignment(): Promise<ActiveAssignmentResponseData> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return MOCK_ACTIVE_TRIP;
-    }
-
     const res = await apiClient<any>('/trips/active-assignment', {
       method: 'GET',
     });
@@ -19,23 +12,30 @@ export const tripApi = {
   },
 
   async fetchTripStock(tripId: string): Promise<TripStockItem[]> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return MOCK_INITIAL_TRIP_STOCK;
-    }
-
     const res = await apiClient<any>(`/inventory/trips/${tripId}/stock`, {
       method: 'GET',
     });
     const rawItems = res.data?.items || res.data?.stock || [];
     if (!Array.isArray(rawItems)) return [];
 
-    return rawItems.map((item: any) => ({
-      productId: item.productId || item.product_id,
-      productName: item.productName || item.product_name || 'Gas Cylinder',
-      sku: item.sku || (item.containerType === 'CANISTER' ? 'BUTANE_170G' : 'LPG_11KG'),
-      condition: item.condition || 'FILLED',
-      quantityUnits: Number(item.currentOnBoardFull ?? item.loadedFull ?? item.quantityUnits ?? item.quantity ?? 0),
-    }));
+    return rawItems.map((item: any) => {
+      const loadedFull = Number(item.loadedFull ?? item.loaded_full ?? item.quantityUnits ?? item.quantity ?? 0);
+      const currentOnBoard = Number(item.currentOnBoardFull ?? item.current_on_board_full ?? loadedFull);
+      const defaultSku = item.containerType === 'CANISTER'
+        ? 'BUTANE_170G'
+        : item.netWeightKg === 50
+        ? 'LPG_50KG'
+        : 'LPG_11KG';
+
+      return {
+        productId: item.productId || item.product_id,
+        productName: item.productName || item.product_name || 'Gas Cylinder',
+        sku: item.sku || defaultSku,
+        condition: item.condition || 'FILLED',
+        quantityUnits: currentOnBoard,
+        loadedFull,
+        currentOnBoardFull: currentOnBoard,
+      };
+    });
   },
 };

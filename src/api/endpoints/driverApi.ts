@@ -1,5 +1,4 @@
-import { apiClient, delay } from '../client';
-import { ENV } from '@/config';
+import { apiClient } from '../client';
 import {
   EmergencyAlertPayload,
   VehicleTelemetry,
@@ -7,11 +6,6 @@ import {
   FuelLog,
   DriverShift,
 } from '@/types';
-import {
-  MOCK_VEHICLE_TELEMETRY,
-  MOCK_MAINTENANCE_LOGS,
-  MOCK_PAST_FUEL_LOGS,
-} from '../mockData';
 
 export interface ClockInResponseData {
   shiftId: string;
@@ -34,16 +28,6 @@ export const driverApi = {
   // 1. Shift Attendance Endpoints
   // ==========================================
   async clockIn(driverId: string, truckId?: string): Promise<ClockInResponseData> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return {
-        shiftId: `shift-${Date.now()}`,
-        driverId,
-        status: 'ON_DUTY',
-        clockInTime: new Date().toISOString(),
-      };
-    }
-
     const now = new Date().toISOString();
     const res = await apiClient<any>('/attendance/clock-in', {
       method: 'POST',
@@ -65,16 +49,6 @@ export const driverApi = {
   },
 
   async clockOut(driverId: string, shiftId?: string): Promise<ClockOutResponseData> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return {
-        shiftId: shiftId || `shift-${Date.now()}`,
-        driverId,
-        status: 'OFF_DUTY',
-        clockOutTime: new Date().toISOString(),
-      };
-    }
-
     const now = new Date().toISOString();
     const isShiftIdUuid = Boolean(shiftId && UUID_REGEX.test(shiftId));
     const payload: Record<string, any> = {
@@ -102,7 +76,6 @@ export const driverApi = {
   },
 
   async fetchActiveShift(userId?: string): Promise<DriverShift | null> {
-    if (ENV.USE_MOCK) return null;
     try {
       const endpoint = userId ? `/attendance/active?userId=${encodeURIComponent(userId)}` : '/attendance/active';
       const res = await apiClient<any>(endpoint);
@@ -125,16 +98,6 @@ export const driverApi = {
   // 2. Emergency SOS Alert
   // ==========================================
   async triggerEmergencyAlert(payload: EmergencyAlertPayload): Promise<any> {
-    if (ENV.USE_MOCK) {
-      await delay(200);
-      return {
-        id: `sos-${Date.now()}`,
-        status: 'ACTIVE',
-        receivedAt: new Date().toISOString(),
-        message: 'Emergency alert dispatched to logistics supervisors and dispatchers.',
-      };
-    }
-
     const body: Record<string, any> = {
       driverId: payload.driverId,
       emergencyType: payload.emergencyType || (payload as any).emergency_type || 'OTHER',
@@ -150,26 +113,36 @@ export const driverApi = {
       body.tripId = payload.tripId;
     }
 
-    const res = await apiClient<any>('/operations/alerts', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-    return res.data;
+    try {
+      const res = await apiClient<any>('/operations/alerts', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      return res.data;
+    } catch (err: any) {
+      const errMsg = err?.message || '';
+      if (
+        body.tripId &&
+        (errMsg.includes('emergency_alerts_trip_id_fkey') ||
+          errMsg.includes('foreign key constraint') ||
+          errMsg.includes('trip_id'))
+      ) {
+        console.warn('[DriverApi] tripId rejected by server foreign key constraint. Retrying SOS without tripId...');
+        delete body.tripId;
+        const retryRes = await apiClient<any>('/operations/alerts', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        return retryRes.data;
+      }
+      throw err;
+    }
   },
 
   // ==========================================
   // 3. Operational Forms (Fuel, Apprehensions, Incidents)
   // ==========================================
   async postFuelLog(payload: any): Promise<any> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return {
-        id: `fuel-${Date.now()}`,
-        ...payload,
-        status: 'SYNCED',
-      };
-    }
-
     const res = await apiClient<any>('/operations/fuel', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -178,15 +151,6 @@ export const driverApi = {
   },
 
   async postApprehension(payload: any): Promise<any> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return {
-        id: `citation-${Date.now()}`,
-        ...payload,
-        status: 'SYNCED',
-      };
-    }
-
     const res = await apiClient<any>('/operations/apprehensions', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -195,15 +159,6 @@ export const driverApi = {
   },
 
   async postVehicleIncident(payload: any): Promise<any> {
-    if (ENV.USE_MOCK) {
-      await delay();
-      return {
-        id: `incident-${Date.now()}`,
-        ...payload,
-        status: 'SYNCED',
-      };
-    }
-
     const res = await apiClient<any>('/fleet/maintenance/incidents', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -215,11 +170,6 @@ export const driverApi = {
   // 4. Vehicle Telemetry & History
   // ==========================================
   async fetchMyVehicle(): Promise<VehicleTelemetry> {
-    if (ENV.USE_MOCK) {
-      await delay(100);
-      return MOCK_VEHICLE_TELEMETRY;
-    }
-
     const res = await apiClient<any>('/fleet/my-vehicle', {
       method: 'GET',
     });
@@ -248,14 +198,6 @@ export const driverApi = {
   },
 
   async fetchVehicleTelemetry(truckId: string): Promise<VehicleTelemetry> {
-    if (ENV.USE_MOCK) {
-      await delay(100);
-      return {
-        ...MOCK_VEHICLE_TELEMETRY,
-        truck_id: truckId || MOCK_VEHICLE_TELEMETRY.truck_id,
-      };
-    }
-
     const res = await apiClient<any>(`/fleet/vehicles/${truckId}`, {
       method: 'GET',
     });
@@ -280,11 +222,6 @@ export const driverApi = {
   },
 
   async fetchMaintenanceLogs(truckId: string): Promise<MaintenanceServiceLogItem[]> {
-    if (ENV.USE_MOCK) {
-      await delay(150);
-      return MOCK_MAINTENANCE_LOGS;
-    }
-
     const res = await apiClient<any>(`/fleet/maintenance/logs?truckId=${truckId}`, {
       method: 'GET',
     });
@@ -303,11 +240,6 @@ export const driverApi = {
   },
 
   async fetchFuelHistory(truckId: string): Promise<FuelLog[]> {
-    if (ENV.USE_MOCK) {
-      await delay(150);
-      return MOCK_PAST_FUEL_LOGS;
-    }
-
     const res = await apiClient<any>(`/operations/fuel?truckId=${truckId}`, {
       method: 'GET',
     });

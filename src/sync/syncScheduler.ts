@@ -9,6 +9,7 @@ export interface SyncSchedulerStatus {
   isOnline: boolean;
   isSyncing: boolean;
   pendingCount: number;
+  quarantinedCount: number;
   lastSyncedAt: string | null;
   activeUserId?: string | null;
 }
@@ -28,11 +29,16 @@ async function getStatusSnapshot(): Promise<SyncSchedulerStatus> {
     }
   }
 
-  const pendingCount = await syncQueueRepository.getPendingCount(activeUserId);
+  const [pendingCount, quarantinedCount] = await Promise.all([
+    syncQueueRepository.getPendingCount(activeUserId),
+    syncQueueRepository.getQuarantinedCount(activeUserId),
+  ]);
+
   return {
     isOnline: networkSentinel.isOnline(),
     isSyncing: syncWorker.isBusy(),
     pendingCount,
+    quarantinedCount,
     lastSyncedAt,
     activeUserId,
   };
@@ -69,6 +75,11 @@ export const syncScheduler = {
    * 2. 30-60s interval heartbeat
    */
   start(): () => void {
+    // 0. Self-heal any orphaned 'PROCESSING' rows left over from app kill/termination
+    syncQueueRepository.resetProcessingItems().catch((err) => {
+      console.warn('[SyncScheduler] Self-healing reset of processing items warning:', err);
+    });
+
     // 1. Initialize Network Sentinel transition callback
     const unsubSentinel = networkSentinel.init(() => {
       console.log('[SyncScheduler] Trigger 1: Backend connection recovered. Executing automatic syncNow.');

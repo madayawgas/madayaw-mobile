@@ -1,12 +1,12 @@
 import './global.css';
-import React, { useState, useEffect } from 'react';
-import { StatusBar, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { StatusBar, Alert, BackHandler, ToastAndroid, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
+import ChangePasswordScreen from './src/screens/auth/ChangePasswordScreen';
 import DashboardScreen from './src/screens/sales/DashboardScreen';
-import CustomerScreen from './src/screens/sales/CustomerScreen';
-import OrderScreen from './src/screens/sales/OrderScreen';
+import SalesScreen from './src/screens/sales/SalesScreen';
 import ProfileScreen from './src/screens/shared/ProfileScreen';
 import DriverDashboardScreen from './src/screens/driver/DriverDashboardScreen';
 import DriverMaintenanceScreen from './src/screens/driver/DriverMaintenanceScreen';
@@ -17,6 +17,7 @@ import { syncScheduler } from './src/sync';
 import { getDatabase } from './src/database';
 import { authService } from './src/services/authService';
 import { authApi } from './src/api/endpoints/authApi';
+import { useBackHandler } from './src/hooks/useBackHandler';
 
 const paperTheme = {
   ...MD3LightTheme,
@@ -32,6 +33,51 @@ export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [user, setUser] = useState(null);
   const [currentTab, setCurrentTab] = useState('dashboard');
+  const [tabHistory, setTabHistory] = useState(['dashboard']);
+  const lastBackPressRef = useRef(0);
+
+  const handleSelectTab = (tab) => {
+    if (tab === currentTab) return;
+    if (tab === 'dashboard') {
+      setTabHistory(['dashboard']);
+    } else {
+      setTabHistory((prev) => [...prev.filter((t) => t !== tab), tab]);
+    }
+    setCurrentTab(tab);
+  };
+
+  // Hardware Back Press Handler: Tab navigation history & root exit debounce
+  useBackHandler(() => {
+    if (!user || user.mustChangePassword) {
+      return false;
+    }
+
+    if (currentTab !== 'dashboard') {
+      if (tabHistory.length > 1) {
+        const nextHistory = [...tabHistory];
+        nextHistory.pop();
+        const prevTab = nextHistory[nextHistory.length - 1] || 'dashboard';
+        setTabHistory(nextHistory);
+        setCurrentTab(prevTab);
+        return true;
+      }
+      setTabHistory(['dashboard']);
+      setCurrentTab('dashboard');
+      return true;
+    }
+
+    const now = Date.now();
+    if (now - lastBackPressRef.current < 2000) {
+      BackHandler.exitApp();
+      return true;
+    }
+
+    lastBackPressRef.current = now;
+    if (Platform.OS === 'android') {
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+    }
+    return true;
+  }, isReady && Boolean(user) && !user.mustChangePassword);
 
   useEffect(() => {
     let isMounted = true;
@@ -43,6 +89,7 @@ export default function App() {
       if (!session) {
         setUser(null);
         setCurrentTab('dashboard');
+        setTabHistory(['dashboard']);
         syncScheduler.setActiveUser(null);
         if (reason === 'revoked') {
           Alert.alert(
@@ -52,7 +99,11 @@ export default function App() {
         }
       } else {
         setUser(session);
-        syncScheduler.setActiveUser(session.id);
+        if (!session.mustChangePassword) {
+          syncScheduler.setActiveUser(session.id);
+        } else {
+          syncScheduler.setActiveUser(null);
+        }
       }
     });
 
@@ -80,7 +131,11 @@ export default function App() {
           } else {
             // 'valid' or 'offline'
             setUser(session);
-            syncScheduler.setActiveUser(session.id);
+            if (!session.mustChangePassword) {
+              syncScheduler.setActiveUser(session.id);
+            } else {
+              syncScheduler.setActiveUser(null);
+            }
           }
         } else {
           setUser(null);
@@ -114,8 +169,12 @@ export default function App() {
 
   const handleLogin = (userData) => {
     setUser(userData);
-    if (userData && userData.id) {
+    setTabHistory(['dashboard']);
+    setCurrentTab('dashboard');
+    if (userData && userData.id && !userData.mustChangePassword) {
       syncScheduler.setActiveUser(userData.id);
+    } else {
+      syncScheduler.setActiveUser(null);
     }
   };
 
@@ -127,6 +186,7 @@ export default function App() {
     }
     syncScheduler.setActiveUser(null);
     setUser(null);
+    setTabHistory(['dashboard']);
     setCurrentTab('dashboard');
   };
 
@@ -142,7 +202,7 @@ export default function App() {
             <DriverMaintenanceScreen
               user={user}
               activeTab={currentTab}
-              onSelectTab={setCurrentTab}
+              onSelectTab={handleSelectTab}
             />
           );
           break;
@@ -152,7 +212,7 @@ export default function App() {
               user={user}
               onLogout={handleLogout}
               activeTab={currentTab}
-              onSelectTab={setCurrentTab}
+              onSelectTab={handleSelectTab}
             />
           );
           break;
@@ -162,7 +222,7 @@ export default function App() {
             <DriverDashboardScreen
               user={user}
               activeTab={currentTab}
-              onSelectTab={setCurrentTab}
+              onSelectTab={handleSelectTab}
             />
           );
           break;
@@ -171,11 +231,9 @@ export default function App() {
     }
 
     switch (currentTab) {
-      case 'order':
-        Content = <OrderScreen activeTab={currentTab} onSelectTab={setCurrentTab} />;
-        break;
+      case 'sales':
       case 'customer':
-        Content = <CustomerScreen activeTab={currentTab} onSelectTab={setCurrentTab} />;
+        Content = <SalesScreen activeTab={currentTab} onSelectTab={handleSelectTab} />;
         break;
       case 'profile':
         Content = (
@@ -183,7 +241,7 @@ export default function App() {
             user={user}
             onLogout={handleLogout}
             activeTab={currentTab}
-            onSelectTab={setCurrentTab}
+            onSelectTab={handleSelectTab}
           />
         );
         break;
@@ -193,7 +251,7 @@ export default function App() {
           <DashboardScreen
             user={user}
             activeTab={currentTab}
-            onSelectTab={setCurrentTab}
+            onSelectTab={handleSelectTab}
           />
         );
         break;
@@ -201,7 +259,6 @@ export default function App() {
 
     return <FadeInView key={currentTab}>{Content}</FadeInView>;
   };
-
 
   return (
     <SafeAreaProvider>
@@ -212,14 +269,21 @@ export default function App() {
         />
         {!isReady ? (
           <SplashScreen />
-        ) : user ? (
-          renderActiveScreen()
-        ) : (
+        ) : !user ? (
           <FadeInView key="login">
             <LoginScreen onLogin={handleLogin} />
           </FadeInView>
+        ) : user.mustChangePassword ? (
+          <FadeInView key="change-password">
+            <ChangePasswordScreen
+              user={user}
+              onLogout={handleLogout}
+            />
+          </FadeInView>
+        ) : (
+          renderActiveScreen()
         )}
       </PaperProvider>
     </SafeAreaProvider>
   );
-}
+}

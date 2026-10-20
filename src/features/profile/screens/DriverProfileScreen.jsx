@@ -6,13 +6,12 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../../../components/navigation/BottomNav';
 import ProfileBg from '../../../../assets/svg/profile-bg.svg';
-import { driverRepository, resetFullDatabase } from '@/database';
+import { driverRepository } from '@/database';
 import { driverService } from '@/services/driverService';
 
 const DRIVER_TABS = [
@@ -38,29 +37,16 @@ const DriverProfileScreen = ({
   onSelectTab,
 }) => {
   const [vehicle, setVehicle] = useState(null);
-  const [isResetting, setIsResetting] = useState(false);
-
-  const handleResetDatabase = () => {
+  const handleLogoutPress = () => {
     Alert.alert(
-      'Reset Local Database',
-      'Are you sure you want to completely reset the local SQLite database? All queued offline mutations and cached data will be cleared and the schema reinitialized to a pristine state.',
+      'Log Out',
+      'Are you sure you want to log out of the cabin?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Reset Database',
+          text: 'Log Out',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              setIsResetting(true);
-              await resetFullDatabase();
-              setVehicle(null);
-              Alert.alert('Database Reset', 'Local database has been reinitialized to a clean state. You can now refresh or restart the cabin.');
-            } catch (err) {
-              Alert.alert('Reset Failed', err?.message || 'Failed to reset local database.');
-            } finally {
-              setIsResetting(false);
-            }
-          },
+          onPress: onLogout,
         },
       ]
     );
@@ -243,33 +229,9 @@ const DriverProfileScreen = ({
             </View>
           </View>
 
-          {/* Local Database & Diagnostics Card */}
-          <View className="mb-4 rounded-[28px] border border-[#DFE8EF] bg-white px-5 pb-5 pt-5 shadow-sm">
-            <Text className="mb-2 text-xs font-bold uppercase tracking-wider text-[#7893A8]">
-              Diagnostics & Data Management
-            </Text>
-            <Text className="mb-4 text-xs text-gray-500">
-              Clear local cached trips, reset stuck sync queues, and reinitialize a pristine local database instance.
-            </Text>
-            <TouchableOpacity
-              onPress={handleResetDatabase}
-              disabled={isResetting}
-              className="rounded-full border border-amber-300 bg-amber-50 py-3.5 items-center justify-center flex-row"
-            >
-              {isResetting ? (
-                <ActivityIndicator size="small" color="#d97706" style={{ marginRight: 6 }} />
-              ) : (
-                <Ionicons name="refresh-circle-outline" size={18} color="#d97706" />
-              )}
-              <Text className="ml-2 text-xs font-bold text-amber-700 uppercase tracking-wider">
-                {isResetting ? 'Resetting Local Database...' : 'Reset Local Database (Clean Slate)'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           {/* Log Out Button */}
           <TouchableOpacity
-            onPress={onLogout}
+            onPress={handleLogoutPress}
             className="rounded-full border border-red-200 bg-red-50/70 py-4 items-center justify-center flex-row shadow-sm"
           >
             <Ionicons name="log-out-outline" size={20} color="#dc2626" />

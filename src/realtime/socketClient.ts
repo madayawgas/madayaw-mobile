@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { Platform } from 'react-native';
 import { ENV } from '@/config';
 import { authService } from '@/services/authService';
 import { networkSentinel } from '@/sync/networkSentinel';
@@ -79,13 +80,6 @@ class SocketClient {
    * Connect to backend Socket.IO server with Bearer auth token
    */
   public connect(token: string): void {
-    if (ENV.USE_MOCK) {
-      this.currentToken = token;
-      this.setConnectedState(true);
-      console.log('[SocketClient] Mock mode active: Realtime socket simulation enabled.');
-      return;
-    }
-
     if (!token) {
       console.warn('[SocketClient] Cannot connect without authentication token.');
       return;
@@ -110,7 +104,11 @@ class SocketClient {
 
     try {
       this.socket = io(socketUrl, {
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'],
+        extraHeaders: {
+          Authorization: `Bearer ${token}`,
+          ...(Platform.OS !== 'web' ? { Origin: 'https://madayawgas.vercel.app' } : {}),
+        },
         auth: {
           token,
         },

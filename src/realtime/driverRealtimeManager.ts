@@ -1,5 +1,5 @@
 import { socketClient } from './socketClient';
-import { tripRepository, driverRepository } from '@/database';
+import { tripRepository, driverRepository, inventoryRepository } from '@/database';
 import { tripApi, driverApi } from '@/api';
 import { authService } from '@/services/authService';
 import { DriverShift, VehicleTelemetry } from '@/types';
@@ -65,6 +65,14 @@ class DriverRealtimeManager {
               sales_user_name: rawTrip.salesUserName || rawTrip.sales_user_name || null,
               zone_name: rawTrip.zoneName || rawTrip.zone_name || null,
             });
+
+            // Hydrate trip stock manifest
+            try {
+              const stockItems = await tripApi.fetchTripStock(tripId);
+              await inventoryRepository.syncTripInventory(tripId, stockItems);
+            } catch (stockErr) {
+              console.warn('[DriverRealtime] Error hydrating stock on TRIP_DISPATCHED:', stockErr);
+            }
           }
         }
       } catch (e) {
@@ -75,11 +83,31 @@ class DriverRealtimeManager {
 
     this.bindEvent('TRIP_LOAD_RECORDED', async (data) => {
       console.log('[DriverRealtime] TRIP_LOAD_RECORDED received:', data?.slipNumber);
+      try {
+        const active = await tripRepository.getActiveTrip();
+        const targetTripId = data?.tripId || active?.trip_id;
+        if (targetTripId) {
+          const stockItems = await tripApi.fetchTripStock(targetTripId);
+          await inventoryRepository.syncTripInventory(targetTripId, stockItems);
+        }
+      } catch (e) {
+        console.warn('[DriverRealtime] Error updating stock on TRIP_LOAD_RECORDED:', e);
+      }
       this.notifyListeners('TRIP_LOAD_RECORDED', data);
     });
 
     this.bindEvent('VEHICLE_STOCK_UPDATED', async (data) => {
       console.log('[DriverRealtime] VEHICLE_STOCK_UPDATED received:', data?.action);
+      try {
+        const active = await tripRepository.getActiveTrip();
+        const targetTripId = data?.tripId || active?.trip_id;
+        if (targetTripId) {
+          const stockItems = await tripApi.fetchTripStock(targetTripId);
+          await inventoryRepository.syncTripInventory(targetTripId, stockItems);
+        }
+      } catch (e) {
+        console.warn('[DriverRealtime] Error updating stock on VEHICLE_STOCK_UPDATED:', e);
+      }
       this.notifyListeners('VEHICLE_STOCK_UPDATED', data);
     });
 
@@ -89,6 +117,7 @@ class DriverRealtimeManager {
         const active = await tripRepository.getActiveTrip();
         if (!data?.tripId || active?.trip_id === data.tripId) {
           await tripRepository.clearActiveTrip();
+          await inventoryRepository.clearInventory();
         }
       } catch (e) {
         console.warn('[DriverRealtime] Error handling trip completion:', e);
@@ -102,6 +131,7 @@ class DriverRealtimeManager {
         const active = await tripRepository.getActiveTrip();
         if (!data?.tripId || active?.trip_id === data.tripId) {
           await tripRepository.clearActiveTrip();
+          await inventoryRepository.clearInventory();
         }
       } catch (e) {
         console.warn('[DriverRealtime] Error handling trip cancellation:', e);
@@ -115,6 +145,7 @@ class DriverRealtimeManager {
         const active = await tripRepository.getActiveTrip();
         if (!data?.tripId || active?.trip_id === data.tripId) {
           await tripRepository.clearActiveTrip();
+          await inventoryRepository.clearInventory();
         }
       } catch (e) {
         console.warn('[DriverRealtime] Error handling trip reconciliation:', e);

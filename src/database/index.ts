@@ -6,3 +6,4 @@ export * from './repositories/customerRepository';
 export * from './repositories/salesRepository';
 export * from './repositories/syncQueueRepository';
 export * from './repositories/driverRepository';
+export * from './repositories/zoneRepository';

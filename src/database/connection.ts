@@ -24,18 +24,47 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       // Enable WAL mode for high concurrency and resilience against app kills
       await db.execAsync('PRAGMA journal_mode = WAL;');
       await db.execAsync('PRAGMA foreign_keys = ON;');
+      await db.execAsync('PRAGMA busy_timeout = 5000;');
 
-      // 1. PRE-MIGRATION: Ensure user_id column exists on sync_queue BEFORE executing SCHEMA_SQL indexes
+      // 1. PRE-MIGRATION: Ensure required columns exist on sync_queue and local_sales_orders
       try {
-        const tableCheck = await db.getFirstAsync<{ name: string }>(
+        const syncTableCheck = await db.getFirstAsync<{ name: string }>(
           "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue';"
         );
-        if (tableCheck) {
+        if (syncTableCheck) {
           const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(sync_queue);");
-          const hasUserId = columns.some((c) => c.name === 'user_id');
-          if (!hasUserId) {
+          const colNames = new Set(columns.map((c) => c.name));
+          if (!colNames.has('user_id')) {
             console.log('[Database] Migrating sync_queue: adding user_id column...');
             await db.execAsync('ALTER TABLE sync_queue ADD COLUMN user_id TEXT;');
+          }
+          if (!colNames.has('error_code')) {
+            console.log('[Database] Migrating sync_queue: adding error_code column...');
+            await db.execAsync('ALTER TABLE sync_queue ADD COLUMN error_code TEXT;');
+          }
+          if (!colNames.has('error_message')) {
+            console.log('[Database] Migrating sync_queue: adding error_message column...');
+            await db.execAsync('ALTER TABLE sync_queue ADD COLUMN error_message TEXT;');
+          }
+          if (!colNames.has('last_error')) {
+            console.log('[Database] Migrating sync_queue: adding last_error column...');
+            await db.execAsync('ALTER TABLE sync_queue ADD COLUMN last_error TEXT;');
+          }
+        }
+
+        const ordersTableCheck = await db.getFirstAsync<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='local_sales_orders';"
+        );
+        if (ordersTableCheck) {
+          const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(local_sales_orders);");
+          const colNames = new Set(columns.map((c) => c.name));
+          if (!colNames.has('error_code')) {
+            console.log('[Database] Migrating local_sales_orders: adding error_code column...');
+            await db.execAsync('ALTER TABLE local_sales_orders ADD COLUMN error_code TEXT;');
+          }
+          if (!colNames.has('error_message')) {
+            console.log('[Database] Migrating local_sales_orders: adding error_message column...');
+            await db.execAsync('ALTER TABLE local_sales_orders ADD COLUMN error_message TEXT;');
           }
         }
       } catch (migErr) {
@@ -94,13 +123,14 @@ export async function resetFullDatabase(): Promise<void> {
       DROP TABLE IF EXISTS local_fuel_logs;
       DROP TABLE IF EXISTS local_apprehensions;
       DROP TABLE IF EXISTS local_incidents;
+      DROP TABLE IF EXISTS local_service_zones;
     `);
   } finally {
     // 2. Always restore foreign keys
     await db.execAsync('PRAGMA foreign_keys = ON;');
   }
 
-  // 3. Recreate all 13 schema tables and indexes
+  // 3. Recreate all 14 schema tables and indexes
   await db.execAsync(SCHEMA_SQL);
 }
 

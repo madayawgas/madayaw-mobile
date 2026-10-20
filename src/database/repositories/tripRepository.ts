@@ -10,6 +10,15 @@ export const tripRepository = {
     return row || null;
   },
 
+  async getActiveTripForUser(userId: string): Promise<ActiveTrip | null> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<ActiveTrip>(
+      'SELECT * FROM local_active_trip WHERE sales_user_id = ? OR driver_id = ? LIMIT 1;',
+      [userId, userId]
+    );
+    return row || null;
+  },
+
   async saveActiveTrip(trip: ActiveTrip): Promise<void> {
     const db = await getDatabase();
     const effectiveTripId = trip.trip_id || `TRIP-LOCAL-${Date.now()}`;

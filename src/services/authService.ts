@@ -1,51 +1,12 @@
-import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
 import { UserSession } from '@/types';
+import { authApi } from '../api/endpoints/authApi';
+import {
+  sessionStore,
+  AuthSessionListener,
+  AuthSessionReason,
+} from './sessionStore';
 
-const TOKEN_KEY = 'mg_session_token';
-const USER_KEY = 'mg_session_user';
-
-// Safe wrapper for Web fallback where SecureStore might not be supported
-async function setSecureItem(key: string, value: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      // fallback
-    }
-    return;
-  }
-  await SecureStore.setItemAsync(key, value);
-}
-
-async function getSecureItem(key: string): Promise<string | null> {
-  if (Platform.OS === 'web') {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
-  return SecureStore.getItemAsync(key);
-}
-
-async function deleteSecureItem(key: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      // fallback
-    }
-    return;
-  }
-  await SecureStore.deleteItemAsync(key);
-}
-
-export type AuthSessionReason = 'login' | 'logout' | 'revoked';
-export type AuthSessionListener = (session: UserSession | null, reason?: AuthSessionReason) => void;
-
-const listeners = new Set<AuthSessionListener>();
-let isRevoking = false;
+export type { AuthSessionListener, AuthSessionReason };
 
 export const authService = {
   /**
@@ -53,52 +14,41 @@ export const authService = {
    * Useful for root coordinators (e.g. App.js) to react to login, logout, and revocation events.
    */
   subscribe(listener: AuthSessionListener): () => void {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
+    return sessionStore.subscribe(listener);
   },
 
-  async getStoredToken(): Promise<string | null> {
-    return getSecureItem(TOKEN_KEY);
-  },
-
-  async getSession(): Promise<UserSession | null> {
-    try {
-      const userJson = await getSecureItem(USER_KEY);
-      const token = await getSecureItem(TOKEN_KEY);
-      if (!userJson || !token) return null;
-
-      const user = JSON.parse(userJson);
-      return {
-        ...user,
-        token,
-      };
-    } catch (e) {
-      console.warn('Failed to parse cached session:', e);
-      return null;
+  /**
+   * Universal login method for the mobile application.
+   * Authenticates against live authApi and persists session in SecureStore.
+   */
+  async login(credentials: { username: string; password: string }): Promise<UserSession> {
+    const authResult = await authApi.login(credentials);
+    if (!authResult?.user) {
+      throw new Error('Invalid authentication response structure');
     }
+    const token = authResult.token || `session-${authResult.user.id}`;
+    return sessionStore.saveSession(authResult.user, token);
   },
 
+  /**
+   * Retrieves the stored auth Bearer token.
+   */
+  async getStoredToken(): Promise<string | null> {
+    return sessionStore.getStoredToken();
+  },
+
+  /**
+   * Retrieves the parsed cached UserSession.
+   */
+  async getSession(): Promise<UserSession | null> {
+    return sessionStore.getSession();
+  },
+
+  /**
+   * Persists user and token into SecureStore and broadcasts to subscribers.
+   */
   async saveSession(user: Omit<UserSession, 'token' | 'savedAt'>, token: string): Promise<UserSession> {
-    const session: UserSession = {
-      ...user,
-      token,
-      savedAt: new Date().toISOString(),
-    };
-
-    await setSecureItem(TOKEN_KEY, token);
-    await setSecureItem(USER_KEY, JSON.stringify(session));
-
-    listeners.forEach((listener) => {
-      try {
-        listener(session, 'login');
-      } catch (e) {
-        console.error('[AuthService] Listener error on login:', e);
-      }
-    });
-
-    return session;
+    return sessionStore.saveSession(user, token);
   },
 
   /**
@@ -107,29 +57,21 @@ export const authService = {
    * Revocation calls are debounced to prevent duplicate alerts from concurrent requests.
    */
   async clearSession(reason: AuthSessionReason = 'logout'): Promise<void> {
-    if (reason === 'revoked') {
-      if (isRevoking) return;
-      isRevoking = true;
-      setTimeout(() => {
-        isRevoking = false;
-      }, 3000);
-    }
-
-    await deleteSecureItem(TOKEN_KEY);
-    await deleteSecureItem(USER_KEY);
-
-    listeners.forEach((listener) => {
-      try {
-        listener(null, reason);
-      } catch (e) {
-        console.error('[AuthService] Listener error on clearSession:', e);
-      }
-    });
+    return sessionStore.clearSession(reason);
   },
 
+  /**
+   * Universal change password method.
+   * Submits new password to backend. On backend success, sessions are revoked.
+   */
+  async changePassword(newPassword: string, currentPassword?: string): Promise<void> {
+    await authApi.changePassword({ newPassword, currentPassword });
+  },
+
+  /**
+   * Checks if an authentication token exists in storage.
+   */
   async isAuthenticated(): Promise<boolean> {
-    const token = await getSecureItem(TOKEN_KEY);
-    return Boolean(token);
+    return sessionStore.isAuthenticated();
   },
 };
-

@@ -18,7 +18,8 @@ export const syncQueueRepository = {
     if (userId) {
       return db.getAllAsync<SyncQueueItem>(
         `SELECT * FROM sync_queue
-         WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < 5))
+         WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < 3))
+           AND status NOT IN ('PROCESSING', 'QUARANTINED', 'SYNCED')
            AND (user_id = ? OR user_id IS NULL)
          ORDER BY created_at ASC
          LIMIT ?;`,
@@ -27,11 +28,44 @@ export const syncQueueRepository = {
     }
     return db.getAllAsync<SyncQueueItem>(
       `SELECT * FROM sync_queue
-       WHERE status = 'PENDING' OR (status = 'FAILED' AND retry_count < 5)
+       WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < 3))
+         AND status NOT IN ('PROCESSING', 'QUARANTINED', 'SYNCED')
        ORDER BY created_at ASC
        LIMIT ?;`,
       [limit]
     );
+  },
+
+  async markItemsProcessing(queueIds: string[]): Promise<void> {
+    if (queueIds.length === 0) return;
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+    const placeholders = queueIds.map(() => '?').join(',');
+    await db.runAsync(
+      `UPDATE sync_queue
+       SET status = 'PROCESSING', last_attempted_at = ?
+       WHERE id IN (${placeholders});`,
+      [now, ...queueIds]
+    );
+  },
+
+  async resetProcessingItems(queueIds?: string[]): Promise<void> {
+    const db = await getDatabase();
+    if (queueIds && queueIds.length > 0) {
+      const placeholders = queueIds.map(() => '?').join(',');
+      await db.runAsync(
+        `UPDATE sync_queue
+         SET status = 'PENDING'
+         WHERE status = 'PROCESSING' AND id IN (${placeholders});`,
+        queueIds
+      );
+    } else {
+      await db.runAsync(
+        `UPDATE sync_queue
+         SET status = 'PENDING'
+         WHERE status = 'PROCESSING';`
+      );
+    }
   },
 
   async markBatchSynced(queueIds: string[]): Promise<void> {
@@ -59,18 +93,64 @@ export const syncQueueRepository = {
     });
   },
 
-  async incrementRetry(id: string, errorMessage?: string): Promise<void> {
+  async quarantineItem(id: string, errorCode: string, errorMessage?: string): Promise<void> {
     const db = await getDatabase();
     const now = new Date().toISOString();
-    await db.runAsync(
-      `UPDATE sync_queue
-       SET retry_count = retry_count + 1,
-           status = 'FAILED',
-           last_attempted_at = ?,
-           error_message = ?
-       WHERE id = ?;`,
-      [now, errorMessage || null, id]
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync(
+        `UPDATE sync_queue
+         SET status = 'QUARANTINED',
+             error_code = ?,
+             error_message = ?,
+             last_error = ?,
+             last_attempted_at = ?
+         WHERE id = ?;`,
+        [errorCode, errorMessage || null, errorMessage || null, now, id]
+      );
+      await txn.runAsync(
+        `UPDATE local_sales_orders
+         SET sync_status = 'QUARANTINED',
+             error_code = ?,
+             error_message = ?
+         WHERE id = ?;`,
+        [errorCode, errorMessage || null, id]
+      );
+    });
+  },
+
+  async incrementRetry(id: string, errorMessage?: string, errorCode?: string): Promise<void> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+    const item = await db.getFirstAsync<{ retry_count: number }>(
+      'SELECT retry_count FROM sync_queue WHERE id = ?;',
+      [id]
     );
+    const newRetryCount = (item?.retry_count || 0) + 1;
+    const newStatus = newRetryCount >= 3 ? 'QUARANTINED' : 'FAILED';
+
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync(
+        `UPDATE sync_queue
+         SET retry_count = ?,
+             status = ?,
+             last_attempted_at = ?,
+             error_code = COALESCE(?, error_code),
+             error_message = ?,
+             last_error = ?
+         WHERE id = ?;`,
+        [newRetryCount, newStatus, now, errorCode || null, errorMessage || null, errorMessage || null, id]
+      );
+      if (newStatus === 'QUARANTINED') {
+        await txn.runAsync(
+          `UPDATE local_sales_orders
+           SET sync_status = 'QUARANTINED',
+               error_code = COALESCE(?, error_code),
+               error_message = ?
+           WHERE id = ?;`,
+          [errorCode || null, errorMessage || null, id]
+        );
+      }
+    });
   },
 
   async getPendingCount(userId?: string | null): Promise<number> {
@@ -78,16 +158,52 @@ export const syncQueueRepository = {
     if (userId) {
       const row = await db.getFirstAsync<{ count: number }>(
         `SELECT COUNT(*) AS count FROM sync_queue
-         WHERE (status = 'PENDING' OR status = 'FAILED')
+         WHERE (status = 'PENDING' OR status = 'PROCESSING' OR (status = 'FAILED' AND retry_count < 3))
            AND (user_id = ? OR user_id IS NULL);`,
         [userId]
       );
       return row?.count || 0;
     }
     const row = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM sync_queue WHERE status = 'PENDING' OR status = 'FAILED';`
+      `SELECT COUNT(*) AS count FROM sync_queue
+       WHERE status = 'PENDING' OR status = 'PROCESSING' OR (status = 'FAILED' AND retry_count < 3);`
     );
     return row?.count || 0;
+  },
+
+  async getQuarantinedCount(userId?: string | null): Promise<number> {
+    const db = await getDatabase();
+    if (userId) {
+      const row = await db.getFirstAsync<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM sync_queue
+         WHERE status = 'QUARANTINED'
+           AND (user_id = ? OR user_id IS NULL);`,
+        [userId]
+      );
+      return row?.count || 0;
+    }
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sync_queue WHERE status = 'QUARANTINED';`
+    );
+    return row?.count || 0;
+  },
+
+  async getQuarantinedItems(userId?: string | null): Promise<SyncQueueItem[]> {
+    const db = await getDatabase();
+    if (userId) {
+      return db.getAllAsync<SyncQueueItem>(
+        `SELECT * FROM sync_queue
+         WHERE status = 'QUARANTINED'
+           AND (user_id = ? OR user_id IS NULL)
+         ORDER BY created_at DESC;`,
+        [userId]
+      );
+    }
+    return db.getAllAsync<SyncQueueItem>(
+      `SELECT * FROM sync_queue
+       WHERE status = 'QUARANTINED'
+       ORDER BY created_at DESC;`
+    );
   },
 
   /**
@@ -97,7 +213,7 @@ export const syncQueueRepository = {
     const db = await getDatabase();
     const row = await db.getFirstAsync<{ count: number }>(
       `SELECT COUNT(*) AS count FROM sync_queue
-       WHERE (status = 'PENDING' OR status = 'FAILED')
+       WHERE (status = 'PENDING' OR status = 'PROCESSING' OR (status = 'FAILED' AND retry_count < 3))
          AND (user_id = ? OR user_id IS NULL)
          AND operation_type = ?;`,
       [userId, operationType]
@@ -118,5 +234,13 @@ export const syncQueueRepository = {
          AND operation_type IN (${placeholders});`,
       [userId, ...operationTypes]
     );
+  },
+
+  /**
+   * Updates payload JSON for a queued item (e.g. after uploading offline media proof).
+   */
+  async updatePayload(id: string, payload: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync('UPDATE sync_queue SET payload = ? WHERE id = ?;', [payload, id]);
   },
 };

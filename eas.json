@@ -1,0 +1,38 @@
+{
+  "cli": {
+    "version": ">= 25.2.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://madayawgas-api.onrender.com/api",
+        "EXPO_PUBLIC_API_TIMEOUT_MS": "10000",
+        "EXPO_PUBLIC_SYNC_INTERVAL_MS": "30000",
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_DEFAULT_ZONE_ID": "7b8f9e6a-5432-41a9-83bc-9d0e12345678"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://madayawgas-api.onrender.com/api",
+        "EXPO_PUBLIC_API_TIMEOUT_MS": "10000",
+        "EXPO_PUBLIC_SYNC_INTERVAL_MS": "30000",
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_DEFAULT_ZONE_ID": "7b8f9e6a-5432-41a9-83bc-9d0e12345678"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
